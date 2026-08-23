@@ -1,0 +1,51 @@
+name: Deploy to Apify
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-apify-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Static checks
+        run: npm run check
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Push Actor to Apify
+        id: apify
+        uses: apify/push-actor-action@master
+        with:
+          token: ${{ secrets.APIFY_TOKEN }}
+
+      - name: Show Apify build result
+        if: always()
+        run: |
+          echo "build-id=${{ steps.apify.outputs.build-id }}"
+          echo "build-number=${{ steps.apify.outputs.build-number }}"
+          echo "build-status=${{ steps.apify.outputs.build-status }}"
