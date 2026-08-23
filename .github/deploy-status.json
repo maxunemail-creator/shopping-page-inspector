@@ -1,17 +1,17 @@
 {
-  "workflow_run_id": "32652397370",
-  "commit": "1378f12b4cdbabc2cca407a0cb665d3c7d996399",
+  "workflow_run_id": "32652611274",
+  "commit": "a7de1524ec8926dfe17f42c3936c3da82f3ec9d8",
   "token_present": "true",
   "install_outcome": "success",
   "check_outcome": "success",
   "test_outcome": "success",
   "apify_outcome": "success",
-  "apify_build_id": "70zFsf5HvuvkzrGwr",
-  "apify_build_number": "0.3.2",
+  "apify_build_id": "TgWKlJFMoGzieiXHJ",
+  "apify_build_number": "0.3.3",
   "apify_build_status": "SUCCEEDED",
   "sample_outcome": "success",
-  "sample_run_id": "88jXjUTqACEhDRoLB",
+  "sample_run_id": "ovlZixSGnoZry1dQ4",
   "sample_run_status": "SUCCEEDED",
-  "sample_kvs_id": "6PHFjO6EGEeTqwiIi",
-  "sample_dataset_id": "K3HBOE0Y8lS9rtyC9"
+  "sample_kvs_id": "NPauN6K9q3xzh2p5e",
+  "sample_dataset_id": "RSj2WRIFMH4ymxy96"
 }
