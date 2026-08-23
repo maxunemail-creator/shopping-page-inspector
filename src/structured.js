@@ -30,7 +30,7 @@ export async function fetchStructured(product, { includePrice = true } = {}) {
 
     // First complementary source: full-gallery oriented FalconScrape actor.
     let gallery = [];
-    let galleryProvider = 'piotrv1001/jd-com-product-scraper';
+    const galleryProvider = 'piotrv1001/jd-com-product-scraper';
     let galleryError = null;
     try {
       const galleryRun = await Actor.call(galleryProvider, {
@@ -43,16 +43,18 @@ export async function fetchStructured(product, { includePrice = true } = {}) {
     }
 
     // Second complementary source: use only when the first gallery source
-    // produced no row. It is also non-fatal and is useful because its schema
-    // exposes imageUrls from the public item page.
+    // produced no row. This actor has a non-empty productUrls prefill, so
+    // productUrls must be explicitly cleared when supplying our own SKU.
     let fallbackGallery = [];
     let fallbackGalleryError = null;
     const fallbackGalleryProvider = 'automation-lab/jd-com-product-scraper';
     if (!gallery.length) {
       try {
         const fallbackRun = await Actor.call(fallbackGalleryProvider, {
+          productUrls: [],
           skus: [product.itemId],
           maxItems: 1,
+          includeApiDetails: false,
         });
         fallbackGallery = await readCalledActorDataset(fallbackRun);
       } catch (error) {
