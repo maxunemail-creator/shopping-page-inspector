@@ -1,12 +1,12 @@
 {
-  "workflow_run_id": "32651927943",
-  "commit": "19e5f85e62cdf20078eb6245b6cf68c013ad94da",
-  "token_present": "",
-  "install_outcome": "skipped",
-  "check_outcome": "skipped",
-  "test_outcome": "skipped",
-  "apify_outcome": "skipped",
-  "apify_build_id": "",
-  "apify_build_number": "",
-  "apify_build_status": ""
+  "workflow_run_id": "32651965670",
+  "commit": "979124efa99d8aff65e158cc6cbd6c01bbd8e9c8",
+  "token_present": "true",
+  "install_outcome": "success",
+  "check_outcome": "success",
+  "test_outcome": "success",
+  "apify_outcome": "failure",
+  "apify_build_id": "FrVdC1cntHy9YqjvM",
+  "apify_build_number": "0.2.1",
+  "apify_build_status": "FAILED"
 }
