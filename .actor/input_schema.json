@@ -1,0 +1,62 @@
+{
+  "title": "Shopping page inspector input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "url": {
+      "title": "Product URL",
+      "type": "string",
+      "description": "JD.com, Taobao or Tmall product URL.",
+      "editor": "textfield",
+      "prefill": "https://item.jd.com/10193770948879.html"
+    },
+    "mode": {
+      "title": "Capture mode",
+      "type": "string",
+      "description": "auto = structured extraction + browser capture; structured-only = public product actor only; browser-only = browser capture only.",
+      "editor": "select",
+      "default": "auto",
+      "enum": ["auto", "structured-only", "browser-only"],
+      "enumTitles": ["Auto", "Structured only", "Browser only"]
+    },
+    "includePrice": {
+      "title": "Fetch current JD price separately",
+      "type": "boolean",
+      "default": true,
+      "description": "JD detail responses can mask price; this optionally calls the price operation too. Ignored for Taobao/Tmall."
+    },
+    "captureLargeImages": {
+      "title": "Capture large detail images",
+      "type": "boolean",
+      "default": true,
+      "description": "Captures the largest product/detail images after scrolling. Useful for dimension and installation drawings embedded as images."
+    },
+    "downloadLargeImageOriginals": {
+      "title": "Save original image bytes",
+      "type": "boolean",
+      "default": true,
+      "description": "For selected large images, also request and save the original image bytes, preserving more detail than an element screenshot when the CDN permits it."
+    },
+    "captureNetworkJson": {
+      "title": "Capture selected JSON responses",
+      "type": "boolean",
+      "default": true,
+      "description": "Records bounded JSON/XHR/fetch responses observed by the real browser. This can expose product specs that are injected dynamically into the page."
+    },
+    "maxLargeImages": {
+      "title": "Maximum detail-image captures",
+      "type": "integer",
+      "default": 18,
+      "minimum": 0,
+      "maximum": 40
+    },
+    "proxyConfiguration": {
+      "title": "Proxy configuration",
+      "type": "object",
+      "description": "Optional standard Apify proxy configuration. Leave disabled unless the page does not load normally. Do not use this Actor to bypass login or CAPTCHA requirements.",
+      "editor": "proxy",
+      "default": { "useApifyProxy": false }
+    }
+  },
+  "required": ["url"]
+}
