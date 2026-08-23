@@ -6,6 +6,8 @@ on:
     paths-ignore:
       - '.github/deploy-status.json'
       - '.github/deploy-v04-status.json'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -91,7 +93,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Record status
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         shell: bash
         run: |
           cat > .github/deploy-v04-status.json <<'EOF'
