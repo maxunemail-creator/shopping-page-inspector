@@ -9,9 +9,17 @@ const BLOCK_MARKERS = [
 const MAX_NETWORK_JSON_RECORDS = 60;
 const MAX_NETWORK_JSON_CHARS = 250000;
 
-function detectBlocked(title, text) {
+function detectBlocked(title, text, finalUrl = '') {
   const haystack = `${title}\n${text}`.toLowerCase();
-  return BLOCK_MARKERS.filter((marker) => haystack.includes(marker.toLowerCase()));
+  const markers = new Set(
+    BLOCK_MARKERS.filter((marker) => haystack.includes(marker.toLowerCase())),
+  );
+
+  if (/passport\.jd\.com|login\.jd\.com/i.test(finalUrl)) markers.add('jd-login-redirect');
+  if (/京东[^\n]{0,20}欢迎登录|登录页面/.test(`${title}\n${text}`)) markers.add('jd-login-page');
+  if (/login\.taobao\.com|login\.tmall\.com/i.test(finalUrl)) markers.add('taobao-tmall-login-redirect');
+
+  return [...markers];
 }
 
 function extensionForContentType(contentType = '') {
@@ -76,11 +84,11 @@ export async function deepCapture(url, {
             const resourceType = request.resourceType();
             if (!contentType.includes('json') && !['xhr', 'fetch'].includes(resourceType)) return;
 
-            const text = await response.text();
-            if (!text || text.length > MAX_NETWORK_JSON_CHARS) return;
+            const responseText = await response.text();
+            if (!responseText || responseText.length > MAX_NETWORK_JSON_CHARS) return;
 
             let parsed = null;
-            try { parsed = JSON.parse(text); } catch { /* keep bounded text */ }
+            try { parsed = JSON.parse(responseText); } catch { /* keep bounded text */ }
 
             if (networkJson.length < MAX_NETWORK_JSON_RECORDS) {
               networkJson.push({
@@ -88,7 +96,7 @@ export async function deepCapture(url, {
                 status: response.status(),
                 resourceType,
                 contentType,
-                body: parsed ?? text,
+                body: parsed ?? responseText,
               });
             }
           } catch {
@@ -220,7 +228,7 @@ export async function deepCapture(url, {
 
       await kv.setValue('DETAIL_MANIFEST.json', captureManifest);
 
-      const blockedMarkers = detectBlocked(title, bodyText);
+      const blockedMarkers = detectBlocked(title, bodyText, finalUrl);
       result = {
         attempted: true,
         ok: blockedMarkers.length === 0,
