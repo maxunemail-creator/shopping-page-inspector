@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '.github/deploy-status.json'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: deploy-apify-main
@@ -28,24 +30,80 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Check APIFY_TOKEN presence
+        id: secret_check
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.APIFY_TOKEN }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install dependencies
+        id: install
+        continue-on-error: true
         run: npm install
 
       - name: Static checks
+        id: check
+        continue-on-error: true
         run: npm run check
 
       - name: Unit tests
+        id: test
+        continue-on-error: true
         run: npm test
 
       - name: Push Actor to Apify
         id: apify
+        if: steps.secret_check.outputs.present == 'true'
+        continue-on-error: true
         uses: apify/push-actor-action@master
         with:
           token: ${{ secrets.APIFY_TOKEN }}
 
-      - name: Show Apify build result
+      - name: Write deployment status
         if: always()
+        shell: bash
         run: |
-          echo "build-id=${{ steps.apify.outputs.build-id }}"
-          echo "build-number=${{ steps.apify.outputs.build-number }}"
-          echo "build-status=${{ steps.apify.outputs.build-status }}"
+          mkdir -p .github
+          cat > .github/deploy-status.json <<'EOF'
+          {
+            "workflow_run_id": "${{ github.run_id }}",
+            "commit": "${{ github.sha }}",
+            "token_present": "${{ steps.secret_check.outputs.present }}",
+            "install_outcome": "${{ steps.install.outcome }}",
+            "check_outcome": "${{ steps.check.outcome }}",
+            "test_outcome": "${{ steps.test.outcome }}",
+            "apify_outcome": "${{ steps.apify.outcome }}",
+            "apify_build_id": "${{ steps.apify.outputs.build-id }}",
+            "apify_build_number": "${{ steps.apify.outputs.build-number }}",
+            "apify_build_status": "${{ steps.apify.outputs.build-status }}"
+          }
+          EOF
+          cat .github/deploy-status.json
+
+      - name: Commit deployment status
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/deploy-status.json
+          if git diff --cached --quiet; then
+            echo "No status change to commit"
+          else
+            git commit -m "chore: record Apify deployment status [skip deploy]"
+            git push
+          fi
+
+      - name: Fail if deployment failed
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.secret_check.outputs.present }}" = "true"
+          test "${{ steps.install.outcome }}" = "success"
+          test "${{ steps.check.outcome }}" = "success"
+          test "${{ steps.test.outcome }}" = "success"
+          test "${{ steps.apify.outcome }}" = "success"
