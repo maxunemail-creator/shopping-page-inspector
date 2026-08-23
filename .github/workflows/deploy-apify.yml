@@ -97,7 +97,7 @@ jobs:
             done
             if [ -s apify-results/KV_KEYS.json ]; then
               jq -r '.data.items[]?.key // empty' apify-results/KV_KEYS.json \
-                | grep -E '^(DETAIL_|STRUCT_IMAGE_|JD_DETAIL_)' || true \
+                | { grep -E '^(DETAIL_|STRUCT_IMAGE_|JD_DETAIL_)' || true; } \
                 | while IFS= read -r key; do
                     [ -z "$key" ] && continue
                     encoded=$(jq -rn --arg s "$key" '$s|@uri')
