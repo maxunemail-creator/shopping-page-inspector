@@ -2,8 +2,8 @@
   "actorSpecification": 1,
   "name": "shopping-page-inspector",
   "title": "JD / Taobao Product Page Inspector",
-  "description": "Structured product extraction and CDN image capture first; browser capture second. Saves SKU/price/gallery data, structured product images, HTML, screenshots and bounded network JSON without automating login or CAPTCHA solving.",
-  "version": "0.3",
+  "description": "Structured product extraction and CDN/public-description image capture first; browser capture second. Saves SKU/price/gallery data, product/detail images, HTML, screenshots and bounded network JSON without automating login or CAPTCHA solving.",
+  "version": "0.4",
   "buildTag": "latest",
   "dockerfile": "./Dockerfile",
   "input": "./input_schema.json"
