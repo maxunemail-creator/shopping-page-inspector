@@ -125,7 +125,7 @@ jobs:
               "${auth[@]}" \
               -o apify-results/KV_KEYS.json || true
 
-            for key in OUTPUT STRUCTURED.json STRUCT_IMAGE_MANIFEST.json PAGE.html PAGE.png VISIBLE_TEXT.txt IMAGES.json JSON_LD.json RESOURCES.json NETWORK_JSON.json DETAIL_MANIFEST.json; do
+            for key in OUTPUT STRUCTURED.json STRUCT_IMAGE_MANIFEST.json JD_DESCRIPTION.json JD_DESCRIPTION_RAW.txt PAGE.html PAGE.png VISIBLE_TEXT.txt IMAGES.json JSON_LD.json RESOURCES.json NETWORK_JSON.json DETAIL_MANIFEST.json; do
               encoded=$(jq -rn --arg s "$key" '$s|@uri')
               dest="$key"
               if [ "$key" = "OUTPUT" ]; then dest="OUTPUT.json"; fi
@@ -137,7 +137,7 @@ jobs:
 
             if [ -s apify-results/KV_KEYS.json ]; then
               jq -r '.data.items[]?.key // empty' apify-results/KV_KEYS.json \
-                | grep -E '^(DETAIL_|STRUCT_IMAGE_)' \
+                | grep -E '^(DETAIL_|STRUCT_IMAGE_|JD_DETAIL_)' \
                 | while IFS= read -r key; do
                     encoded=$(jq -rn --arg s "$key" '$s|@uri')
                     curl -fsS \
