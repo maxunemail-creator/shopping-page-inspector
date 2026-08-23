@@ -1,4 +1,4 @@
-import { Actor } from 'apify';
+import { Actor, log } from 'apify';
 
 async function readCalledActorDataset(run) {
   if (!run?.defaultDatasetId) return [];
@@ -28,10 +28,28 @@ export async function fetchStructured(product, { includePrice = true } = {}) {
       price = await readCalledActorDataset(priceRun);
     }
 
+    // Complement the deep-SKU extractor with a gallery-oriented JD extractor.
+    // This remains non-fatal: if the secondary Actor is unavailable or its
+    // input contract changes, the primary SIAN result is still returned.
+    let gallery = [];
+    let galleryError = null;
+    try {
+      const galleryRun = await Actor.call('piotrv1001/jd-com-product-scraper', {
+        skuIds: [product.itemId],
+      });
+      gallery = await readCalledActorDataset(galleryRun);
+    } catch (error) {
+      galleryError = error?.message ?? String(error);
+      log.warning(`Complementary JD gallery extraction failed: ${galleryError}`);
+    }
+
     return {
       provider: 'sian.agency/jd-com-product-scraper',
+      galleryProvider: 'piotrv1001/jd-com-product-scraper',
       detail,
       price,
+      gallery,
+      galleryError,
     };
   }
 
