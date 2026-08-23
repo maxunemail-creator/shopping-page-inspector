@@ -2,6 +2,7 @@ import { Actor, log } from 'apify';
 import { identifyProduct } from './url.js';
 import { fetchStructured } from './structured.js';
 import { saveStructuredImages } from './structured-images.js';
+import { fetchJdDescriptionImages } from './jd-description.js';
 import { deepCapture } from './deep-capture.js';
 
 function hasStructuredData(structured) {
@@ -9,6 +10,7 @@ function hasStructuredData(structured) {
     structured
     && ((Array.isArray(structured.detail) && structured.detail.length)
       || (Array.isArray(structured.gallery) && structured.gallery.length)
+      || (Array.isArray(structured.fallbackGallery) && structured.fallbackGallery.length)
       || (Array.isArray(structured.price) && structured.price.length)),
   );
 }
@@ -26,6 +28,8 @@ await Actor.main(async () => {
   let structuredError = null;
   let structuredImages = null;
   let structuredImagesError = null;
+  let jdDescription = null;
+  let jdDescriptionError = null;
 
   if (mode !== 'browser-only' && product.site !== 'other') {
     try {
@@ -42,6 +46,17 @@ await Actor.main(async () => {
       } catch (error) {
         structuredImagesError = error?.message ?? String(error);
         log.warning(`Structured image capture failed: ${structuredImagesError}`);
+      }
+
+      if (product.site === 'jd' && product.itemId) {
+        try {
+          jdDescription = await fetchJdDescriptionImages(product.itemId, {
+            referer: product.canonicalUrl,
+          });
+        } catch (error) {
+          jdDescriptionError = error?.message ?? String(error);
+          log.warning(`JD description-image capture failed: ${jdDescriptionError}`);
+        }
       }
     } catch (error) {
       structuredError = error?.message ?? String(error);
@@ -62,6 +77,7 @@ await Actor.main(async () => {
 
   const structuredOk = hasStructuredData(structured);
   const browserOk = browser?.ok ?? null;
+  const evidenceImageCount = (structuredImages?.saved ?? 0) + (jdDescription?.saved ?? 0);
   const output = {
     inspectedAt: new Date().toISOString(),
     inputUrl: input.url,
@@ -71,13 +87,16 @@ await Actor.main(async () => {
     structuredError,
     structuredImages,
     structuredImagesError,
+    jdDescription,
+    jdDescriptionError,
     browser,
     interpretation: {
       structuredUsable: structuredOk,
       browserUsable: browserOk,
+      evidenceImageCount,
       complete: structuredOk && (mode === 'structured-only' || !browser || browser.ok),
       note: browser?.blockedMarkers?.length
-        ? 'Browser capture encountered a login/verification/access-control page. Structured extractors and structured-image capture remain usable; the Actor records the browser capture as partial and does not automate bypassing access controls.'
+        ? 'Browser capture encountered a login/verification/access-control page. Structured extractors, CDN image capture, and the public JD description endpoint can still provide usable evidence; the Actor records browser capture as partial and does not automate bypassing access controls.'
         : null,
     },
   };
@@ -89,6 +108,7 @@ await Actor.main(async () => {
     canonicalUrl: product.canonicalUrl,
     structuredOk,
     structuredImageCount: structuredImages?.saved ?? null,
+    jdDescriptionImageCount: jdDescription?.saved ?? null,
     browserOk,
     browserTitle: browser?.title ?? null,
     imageCount: browser?.imageCount ?? null,
@@ -98,6 +118,7 @@ await Actor.main(async () => {
     blockedMarkers: browser?.blockedMarkers ?? [],
     structuredError,
     structuredImagesError,
+    jdDescriptionError,
     browserError: browser?.error ?? null,
   });
 });
