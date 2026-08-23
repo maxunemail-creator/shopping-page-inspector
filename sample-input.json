@@ -1,0 +1,12 @@
+{
+  "url": "https://item.jd.com/10193770948879.html",
+  "mode": "auto",
+  "includePrice": true,
+  "captureLargeImages": true,
+  "downloadLargeImageOriginals": true,
+  "captureNetworkJson": true,
+  "maxLargeImages": 18,
+  "proxyConfiguration": {
+    "useApifyProxy": false
+  }
+}
