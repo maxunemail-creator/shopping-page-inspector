@@ -46,6 +46,7 @@
     "maxLargeImages": {
       "title": "Maximum detail-image captures",
       "type": "integer",
+      "description": "Maximum number of the largest detail/product images to save per run. Use 0 to disable image-element captures.",
       "default": 18,
       "minimum": 0,
       "maximum": 40
