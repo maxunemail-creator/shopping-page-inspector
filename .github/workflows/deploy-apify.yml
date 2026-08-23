@@ -62,6 +62,106 @@ jobs:
         with:
           token: ${{ secrets.APIFY_TOKEN }}
 
+      - name: Run JD acceptance sample
+        id: smoke
+        if: steps.apify.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          APIFY_ACTOR_ID: qIrlxzbplFdbhayua
+        run: |
+          set -u
+          mkdir -p apify-results
+
+          auth=(-H "Authorization: Bearer ${APIFY_TOKEN}")
+          json=(-H "Content-Type: application/json")
+
+          curl --fail-with-body -sS -X POST \
+            "https://api.apify.com/v2/actors/${APIFY_ACTOR_ID}/runs?waitForFinish=60" \
+            "${auth[@]}" "${json[@]}" \
+            --data-binary @sample-input.json \
+            -o apify-results/run-response.json
+
+          RUN_ID=$(jq -r '.data.id // empty' apify-results/run-response.json)
+          RUN_STATUS=$(jq -r '.data.status // empty' apify-results/run-response.json)
+
+          if [ -z "$RUN_ID" ]; then
+            echo "Actor API returned no run id"
+            cat apify-results/run-response.json
+            exit 1
+          fi
+
+          echo "run-id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+          for attempt in 1 2 3 4; do
+            case "$RUN_STATUS" in
+              SUCCEEDED|FAILED|TIMED-OUT|ABORTED) break ;;
+            esac
+            curl --fail-with-body -sS \
+              "https://api.apify.com/v2/actor-runs/${RUN_ID}?waitForFinish=60" \
+              "${auth[@]}" \
+              -o apify-results/run-response.json
+            RUN_STATUS=$(jq -r '.data.status // empty' apify-results/run-response.json)
+          done
+
+          echo "run-status=$RUN_STATUS" >> "$GITHUB_OUTPUT"
+
+          KVS_ID=$(jq -r '.data.defaultKeyValueStoreId // empty' apify-results/run-response.json)
+          DATASET_ID=$(jq -r '.data.defaultDatasetId // empty' apify-results/run-response.json)
+          echo "kvs-id=$KVS_ID" >> "$GITHUB_OUTPUT"
+          echo "dataset-id=$DATASET_ID" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$DATASET_ID" ]; then
+            curl -fsS \
+              "https://api.apify.com/v2/datasets/${DATASET_ID}/items?clean=true&format=json" \
+              "${auth[@]}" \
+              -o apify-results/DATASET.json || true
+          fi
+
+          if [ -n "$KVS_ID" ]; then
+            curl -fsS \
+              "https://api.apify.com/v2/key-value-stores/${KVS_ID}/keys?limit=1000" \
+              "${auth[@]}" \
+              -o apify-results/KV_KEYS.json || true
+
+            for key in OUTPUT STRUCTURED.json PAGE.html PAGE.png VISIBLE_TEXT.txt IMAGES.json JSON_LD.json RESOURCES.json NETWORK_JSON.json DETAIL_MANIFEST.json; do
+              encoded=$(jq -rn --arg s "$key" '$s|@uri')
+              dest="$key"
+              if [ "$key" = "OUTPUT" ]; then dest="OUTPUT.json"; fi
+              curl -fsS \
+                "https://api.apify.com/v2/key-value-stores/${KVS_ID}/records/${encoded}" \
+                "${auth[@]}" \
+                -o "apify-results/${dest}" || true
+            done
+
+            if [ -s apify-results/KV_KEYS.json ]; then
+              jq -r '.data.items[]?.key // empty' apify-results/KV_KEYS.json \
+                | grep '^DETAIL_' \
+                | while IFS= read -r key; do
+                    encoded=$(jq -rn --arg s "$key" '$s|@uri')
+                    curl -fsS \
+                      "https://api.apify.com/v2/key-value-stores/${KVS_ID}/records/${encoded}" \
+                      "${auth[@]}" \
+                      -o "apify-results/${key}" || true
+                  done
+            fi
+          fi
+
+          if [ "$RUN_STATUS" != "SUCCEEDED" ]; then
+            echo "Actor sample run finished with status: $RUN_STATUS"
+            exit 1
+          fi
+
+      - name: Upload JD acceptance evidence
+        if: always() && steps.smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jd-acceptance-${{ github.run_id }}
+          path: apify-results/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Write deployment status
         if: always()
         shell: bash
@@ -78,7 +178,12 @@ jobs:
             "apify_outcome": "${{ steps.apify.outcome }}",
             "apify_build_id": "${{ steps.apify.outputs.build-id }}",
             "apify_build_number": "${{ steps.apify.outputs.build-number }}",
-            "apify_build_status": "${{ steps.apify.outputs.build-status }}"
+            "apify_build_status": "${{ steps.apify.outputs.build-status }}",
+            "sample_outcome": "${{ steps.smoke.outcome }}",
+            "sample_run_id": "${{ steps.smoke.outputs.run-id }}",
+            "sample_run_status": "${{ steps.smoke.outputs.run-status }}",
+            "sample_kvs_id": "${{ steps.smoke.outputs.kvs-id }}",
+            "sample_dataset_id": "${{ steps.smoke.outputs.dataset-id }}"
           }
           EOF
           cat .github/deploy-status.json
@@ -97,7 +202,7 @@ jobs:
             git push
           fi
 
-      - name: Fail if deployment failed
+      - name: Fail if deployment or acceptance failed
         if: always()
         shell: bash
         run: |
@@ -106,3 +211,4 @@ jobs:
           test "${{ steps.check.outcome }}" = "success"
           test "${{ steps.test.outcome }}" = "success"
           test "${{ steps.apify.outcome }}" = "success"
+          test "${{ steps.smoke.outcome }}" = "success"
