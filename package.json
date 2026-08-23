@@ -1,12 +1,12 @@
 {
   "name": "shopping-page-inspector-actor",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node src/main.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/main.js && node --check src/url.js && node --check src/structured.js && node --check src/structured-images.js && node --check src/deep-capture.js"
+    "check": "node --check src/main.js && node --check src/url.js && node --check src/structured.js && node --check src/structured-images.js && node --check src/jd-description.js && node --check src/deep-capture.js"
   },
   "dependencies": {
     "apify": "^3.4.4",
