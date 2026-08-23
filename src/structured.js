@@ -28,13 +28,12 @@ export async function fetchStructured(product, { includePrice = true } = {}) {
       price = await readCalledActorDataset(priceRun);
     }
 
-    // Complement the deep-SKU extractor with a gallery-oriented JD extractor.
-    // This remains non-fatal: if the secondary Actor is unavailable or its
-    // input contract changes, the primary SIAN result is still returned.
+    // First complementary source: full-gallery oriented FalconScrape actor.
     let gallery = [];
+    let galleryProvider = 'piotrv1001/jd-com-product-scraper';
     let galleryError = null;
     try {
-      const galleryRun = await Actor.call('piotrv1001/jd-com-product-scraper', {
+      const galleryRun = await Actor.call(galleryProvider, {
         skuIds: [product.itemId],
       });
       gallery = await readCalledActorDataset(galleryRun);
@@ -43,13 +42,35 @@ export async function fetchStructured(product, { includePrice = true } = {}) {
       log.warning(`Complementary JD gallery extraction failed: ${galleryError}`);
     }
 
+    // Second complementary source: use only when the first gallery source
+    // produced no row. It is also non-fatal and is useful because its schema
+    // exposes imageUrls from the public item page.
+    let fallbackGallery = [];
+    let fallbackGalleryError = null;
+    const fallbackGalleryProvider = 'automation-lab/jd-com-product-scraper';
+    if (!gallery.length) {
+      try {
+        const fallbackRun = await Actor.call(fallbackGalleryProvider, {
+          skus: [product.itemId],
+          maxItems: 1,
+        });
+        fallbackGallery = await readCalledActorDataset(fallbackRun);
+      } catch (error) {
+        fallbackGalleryError = error?.message ?? String(error);
+        log.warning(`Fallback JD gallery extraction failed: ${fallbackGalleryError}`);
+      }
+    }
+
     return {
       provider: 'sian.agency/jd-com-product-scraper',
-      galleryProvider: 'piotrv1001/jd-com-product-scraper',
       detail,
       price,
+      galleryProvider,
       gallery,
       galleryError,
+      fallbackGalleryProvider,
+      fallbackGallery,
+      fallbackGalleryError,
     };
   }
 
