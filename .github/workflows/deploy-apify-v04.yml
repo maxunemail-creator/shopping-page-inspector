@@ -1,0 +1,114 @@
+name: Deploy v0.4 to Apify
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '.github/deploy-status.json'
+      - '.github/deploy-v04-status.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy-v04:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install and verify
+        run: |
+          npm install
+          npm run check
+          npm test
+
+      - name: Push Actor
+        id: apify
+        uses: apify/push-actor-action@master
+        with:
+          token: ${{ secrets.APIFY_TOKEN }}
+
+      - name: Acceptance run and download evidence
+        id: smoke
+        shell: bash
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          ACTOR_ID: qIrlxzbplFdbhayua
+        run: |
+          set -euo pipefail
+          mkdir -p apify-results
+          curl -fsS -X POST \
+            "https://api.apify.com/v2/actors/${ACTOR_ID}/runs?waitForFinish=60" \
+            -H "Authorization: Bearer ${APIFY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary @sample-input.json \
+            -o apify-results/run.json
+          RUN_ID=$(jq -r '.data.id' apify-results/run.json)
+          STATUS=$(jq -r '.data.status' apify-results/run.json)
+          for i in 1 2 3 4; do
+            case "$STATUS" in SUCCEEDED|FAILED|TIMED-OUT|ABORTED) break;; esac
+            curl -fsS "https://api.apify.com/v2/actor-runs/${RUN_ID}?waitForFinish=60" \
+              -H "Authorization: Bearer ${APIFY_TOKEN}" -o apify-results/run.json
+            STATUS=$(jq -r '.data.status' apify-results/run.json)
+          done
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_status=$STATUS" >> "$GITHUB_OUTPUT"
+          KVS=$(jq -r '.data.defaultKeyValueStoreId' apify-results/run.json)
+          DATASET=$(jq -r '.data.defaultDatasetId' apify-results/run.json)
+          echo "kvs_id=$KVS" >> "$GITHUB_OUTPUT"
+          echo "dataset_id=$DATASET" >> "$GITHUB_OUTPUT"
+          curl -fsS "https://api.apify.com/v2/key-value-stores/${KVS}/keys?limit=1000" \
+            -H "Authorization: Bearer ${APIFY_TOKEN}" -o apify-results/KV_KEYS.json
+          curl -fsS "https://api.apify.com/v2/datasets/${DATASET}/items?clean=true&format=json" \
+            -H "Authorization: Bearer ${APIFY_TOKEN}" -o apify-results/DATASET.json || true
+          for key in OUTPUT STRUCTURED.json STRUCT_IMAGE_MANIFEST.json JD_DESCRIPTION.json JD_DESCRIPTION_RAW.txt PAGE.html PAGE.png VISIBLE_TEXT.txt IMAGES.json JSON_LD.json RESOURCES.json NETWORK_JSON.json DETAIL_MANIFEST.json; do
+            encoded=$(jq -rn --arg s "$key" '$s|@uri')
+            dest="$key"; [ "$key" = OUTPUT ] && dest=OUTPUT.json
+            curl -fsS "https://api.apify.com/v2/key-value-stores/${KVS}/records/${encoded}" \
+              -H "Authorization: Bearer ${APIFY_TOKEN}" -o "apify-results/${dest}" || true
+          done
+          jq -r '.data.items[]?.key // empty' apify-results/KV_KEYS.json \
+            | grep -E '^(DETAIL_|STRUCT_IMAGE_|JD_DETAIL_)' \
+            | while IFS= read -r key; do
+                encoded=$(jq -rn --arg s "$key" '$s|@uri')
+                curl -fsS "https://api.apify.com/v2/key-value-stores/${KVS}/records/${encoded}" \
+                  -H "Authorization: Bearer ${APIFY_TOKEN}" -o "apify-results/${key}" || true
+              done
+          test "$STATUS" = SUCCEEDED
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jd-v04-${{ github.run_id }}
+          path: apify-results/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Record status
+        if: always()
+        shell: bash
+        run: |
+          cat > .github/deploy-v04-status.json <<'EOF'
+          {
+            "workflow_run_id": "${{ github.run_id }}",
+            "commit": "${{ github.sha }}",
+            "build_id": "${{ steps.apify.outputs.build-id }}",
+            "build_number": "${{ steps.apify.outputs.build-number }}",
+            "build_status": "${{ steps.apify.outputs.build-status }}",
+            "run_id": "${{ steps.smoke.outputs.run_id }}",
+            "run_status": "${{ steps.smoke.outputs.run_status }}",
+            "kvs_id": "${{ steps.smoke.outputs.kvs_id }}",
+            "dataset_id": "${{ steps.smoke.outputs.dataset_id }}"
+          }
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/deploy-v04-status.json
+          git commit -m "chore: record v0.4 deployment [skip deploy]" || true
+          git push || true
