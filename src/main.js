@@ -1,7 +1,17 @@
 import { Actor, log } from 'apify';
 import { identifyProduct } from './url.js';
 import { fetchStructured } from './structured.js';
+import { saveStructuredImages } from './structured-images.js';
 import { deepCapture } from './deep-capture.js';
+
+function hasStructuredData(structured) {
+  return Boolean(
+    structured
+    && ((Array.isArray(structured.detail) && structured.detail.length)
+      || (Array.isArray(structured.gallery) && structured.gallery.length)
+      || (Array.isArray(structured.price) && structured.price.length)),
+  );
+}
 
 await Actor.main(async () => {
   const input = (await Actor.getInput()) ?? {};
@@ -14,12 +24,25 @@ await Actor.main(async () => {
 
   let structured = null;
   let structuredError = null;
+  let structuredImages = null;
+  let structuredImagesError = null;
+
   if (mode !== 'browser-only' && product.site !== 'other') {
     try {
       structured = await fetchStructured(product, {
         includePrice: input.includePrice !== false,
       });
       await Actor.setValue('STRUCTURED.json', structured);
+
+      try {
+        structuredImages = await saveStructuredImages(structured, {
+          maxImages: 30,
+          referer: product.canonicalUrl,
+        });
+      } catch (error) {
+        structuredImagesError = error?.message ?? String(error);
+        log.warning(`Structured image capture failed: ${structuredImagesError}`);
+      }
     } catch (error) {
       structuredError = error?.message ?? String(error);
       log.warning(`Structured extraction failed: ${structuredError}`);
@@ -37,6 +60,8 @@ await Actor.main(async () => {
     });
   }
 
+  const structuredOk = hasStructuredData(structured);
+  const browserOk = browser?.ok ?? null;
   const output = {
     inspectedAt: new Date().toISOString(),
     inputUrl: input.url,
@@ -44,11 +69,15 @@ await Actor.main(async () => {
     mode,
     structured,
     structuredError,
+    structuredImages,
+    structuredImagesError,
     browser,
     interpretation: {
-      complete: Boolean(structured) && (!browser || browser.ok),
+      structuredUsable: structuredOk,
+      browserUsable: browserOk,
+      complete: structuredOk && (mode === 'structured-only' || !browser || browser.ok),
       note: browser?.blockedMarkers?.length
-        ? 'Browser capture encountered a login/verification/access-control page. The Actor records the partial capture but does not automate bypassing it.'
+        ? 'Browser capture encountered a login/verification/access-control page. Structured extractors and structured-image capture remain usable; the Actor records the browser capture as partial and does not automate bypassing access controls.'
         : null,
     },
   };
@@ -58,8 +87,9 @@ await Actor.main(async () => {
     site: product.site,
     itemId: product.itemId,
     canonicalUrl: product.canonicalUrl,
-    structuredOk: Boolean(structured),
-    browserOk: browser?.ok ?? null,
+    structuredOk,
+    structuredImageCount: structuredImages?.saved ?? null,
+    browserOk,
     browserTitle: browser?.title ?? null,
     imageCount: browser?.imageCount ?? null,
     capturedLargeImages: browser?.capturedLargeImages ?? null,
@@ -67,6 +97,7 @@ await Actor.main(async () => {
     networkJsonCount: browser?.networkJsonCount ?? null,
     blockedMarkers: browser?.blockedMarkers ?? [],
     structuredError,
+    structuredImagesError,
     browserError: browser?.error ?? null,
   });
 });
