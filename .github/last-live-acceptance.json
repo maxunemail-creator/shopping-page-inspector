@@ -1,0 +1,26 @@
+{
+  "tested_at": "2026-08-23T17:02:39Z",
+  "actor_id": "qIrlxzbplFdbhayua",
+  "actor_name": "shopping-page-inspector",
+  "actor_version": "0.4",
+  "build_id": "XKcQ63Go2ctg6YyHA",
+  "build_number": "0.4.7",
+  "build_status": "SUCCEEDED",
+  "workflow_run_id": 32653409099,
+  "sample_run_id": "Npy3dItbTPiDcH43N",
+  "sample_status": "ABORTED",
+  "sample_status_message": "Actor aborted. You've reached the maximum usage for your current billing cycle.",
+  "sample_duration_seconds": 119.474,
+  "sample_compute_units": 0.1327488888888889,
+  "previous_successful_live_sample": {
+    "build_number": "0.3.4",
+    "sample_run_id": "1A9kbaDcWtWH5frg0",
+    "sample_status": "SUCCEEDED",
+    "structured_product_ok": true,
+    "sku": "10193770948879",
+    "price_cny": 515,
+    "structured_images_saved": 19,
+    "browser_page_status": "PARTIAL_LOGIN_REDIRECT"
+  },
+  "policy": "Normal pushes deploy and test code but do not run the live shopping sample. Live smoke testing is manual-only until Apify usage is available again."
+}
