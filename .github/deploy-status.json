@@ -1,0 +1,12 @@
+{
+  "workflow_run_id": "32651927943",
+  "commit": "19e5f85e62cdf20078eb6245b6cf68c013ad94da",
+  "token_present": "",
+  "install_outcome": "skipped",
+  "check_outcome": "skipped",
+  "test_outcome": "skipped",
+  "apify_outcome": "skipped",
+  "apify_build_id": "",
+  "apify_build_number": "",
+  "apify_build_status": ""
+}
