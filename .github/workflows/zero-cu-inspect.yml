@@ -1,0 +1,123 @@
+name: Zero-CU product inspection
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/zero-cu.js'
+      - 'src/url.js'
+      - 'package.json'
+      - 'request.json'
+      - '.github/workflows/zero-cu-inspect.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/zero-cu.js'
+      - 'src/url.js'
+      - 'package.json'
+      - 'request.json'
+      - '.github/workflows/zero-cu-inspect.yml'
+  workflow_dispatch:
+    inputs:
+      product_url:
+        description: 'Optional product URL; defaults to request.json'
+        required: false
+        type: string
+      max_images:
+        description: 'Maximum images to download'
+        required: false
+        default: '36'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zero-cu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax and unit checks
+        run: |
+          npm run check
+          npm test
+
+      - name: Resolve request
+        id: request
+        shell: bash
+        env:
+          INPUT_URL: ${{ inputs.product_url }}
+          INPUT_MAX_IMAGES: ${{ inputs.max_images }}
+        run: |
+          set -euo pipefail
+          FILE_URL=$(node -e "const fs=require('fs'); const x=JSON.parse(fs.readFileSync('request.json','utf8')); process.stdout.write(String(x.url||''));")
+          FILE_MAX=$(node -e "const fs=require('fs'); const x=JSON.parse(fs.readFileSync('request.json','utf8')); process.stdout.write(String(x.maxImages||36));")
+          URL="${INPUT_URL:-$FILE_URL}"
+          MAX="${INPUT_MAX_IMAGES:-$FILE_MAX}"
+          test -n "$URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "max_images=$MAX" >> "$GITHUB_OUTPUT"
+          echo "Inspecting: $URL"
+
+      - name: Run zero-CU inspection
+        id: inspect
+        continue-on-error: true
+        shell: bash
+        env:
+          MAX_IMAGES: ${{ steps.request.outputs.max_images }}
+        run: |
+          set -o pipefail
+          rm -rf zero-cu-results
+          node src/zero-cu.js "${{ steps.request.outputs.url }}" zero-cu-results | tee zero-cu-console.txt
+
+      - name: Publish compact summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Zero-CU product inspection'
+            echo
+            echo '- URL: `${{ steps.request.outputs.url }}`'
+            echo '- Outcome: `${{ steps.inspect.outcome }}`'
+            if [ -f zero-cu-results/ZERO_CU_SUMMARY.json ]; then
+              echo '- Site: `'$(jq -r '.site // "unknown"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- SKU: `'$(jq -r '.skuId // .itemId // "n/a"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Title: '$(jq -r '.title // "(not recovered)"' zero-cu-results/ZERO_CU_SUMMARY.json)
+              echo '- Usable: `'$(jq -r '.usable // false' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Saved images: `'$(jq -r '.imageEvidence.saved // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Detail images discovered: `'$(jq -r '.imageEvidence.detailDiscovered // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Browser required: `'$(jq -r '.engineeringEvidence.browserRequired // "n/a"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero-cu-evidence-${{ github.run_id }}
+          path: |
+            zero-cu-results/
+            zero-cu-console.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce usable result
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.inspect.outcome }}" = "success"
+          test -f zero-cu-results/ZERO_CU_SUMMARY.json
+          test "$(jq -r '.usable // false' zero-cu-results/ZERO_CU_SUMMARY.json)" = "true"
