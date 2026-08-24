@@ -1,30 +1,63 @@
 {
-  "accepted_at": "2026-08-24T11:43:15Z",
-  "workflow_run_id": 32723225484,
-  "artifact_id": 9518537556,
-  "sample_url": "https://item.jd.com/10193770948879.html",
-  "sku": "10193770948879",
+  "accepted_at": "2026-08-24T11:48:24Z",
   "result": "PASS_LAYOUT_USABLE",
-  "evidence_class": "LAYOUT_USABLE",
-  "exact_variant_matched": true,
-  "advertised_color": "黑胡桃+黑架【25mm实木桌面】",
-  "advertised_size": "120*60*170cm【书架洞洞板】",
-  "variant_count": 48,
-  "color_count": 8,
-  "size_count": 6,
-  "main_image_count": 3,
-  "structured_image_candidates": 10,
-  "structured_useful_images_saved": 10,
-  "page_detail_useful_images": 0,
-  "deep_geometry_status": "OPEN_NEEDS_DETAIL_PAGE_OR_USER_SESSION",
-  "important_sibling_variant": {
-    "color": "黑胡桃+黑架【25mm实木桌面】",
-    "size": "140*60*170cm【书架洞洞板】",
-    "sku": "10193770948880"
+  "architecture": "ZERO_CU_GITHUB_ACTIONS_JD_MOBILE_FIRST",
+  "samples": [
+    {
+      "workflow_run_id": 32723225484,
+      "artifact_id": 9518537556,
+      "sample_url": "https://item.jd.com/10193770948879.html",
+      "sku": "10193770948879",
+      "advertised_color": "黑胡桃+黑架【25mm实木桌面】",
+      "advertised_size": "120*60*170cm【书架洞洞板】",
+      "evidence_class": "LAYOUT_USABLE",
+      "exact_variant_matched": true,
+      "variant_count": 48,
+      "main_image_count": 3,
+      "structured_useful_images_saved": 10,
+      "page_detail_useful_images": 0
+    },
+    {
+      "workflow_run_id": 32723681396,
+      "artifact_id": 9518693501,
+      "sample_url": "https://item.jd.com/10193770948880.html",
+      "sku": "10193770948880",
+      "advertised_color": "黑胡桃+黑架【25mm实木桌面】",
+      "advertised_size": "140*60*170cm【书架洞洞板】",
+      "evidence_class": "LAYOUT_USABLE",
+      "exact_variant_matched": true,
+      "variant_count": 48,
+      "main_image_count": 3,
+      "structured_useful_images_saved": 10,
+      "page_detail_useful_images": 0
+    }
+  ],
+  "matrix": {
+    "brand": "奕洲",
+    "colors": 8,
+    "sizes": [
+      "80*60*170cm【书架洞洞板】",
+      "100*60*170cm【书架洞洞板】",
+      "120*60*170cm【书架洞洞板】",
+      "140*60*170cm【书架洞洞板】",
+      "160*60*170cm【书架洞洞板】",
+      "180*60*170cm【书架洞洞板】"
+    ],
+    "variants": 48,
+    "black_walnut_black_frame_skus": {
+      "80*60*170": "10193770948877",
+      "100*60*170": "10193770948878",
+      "120*60*170": "10193770948879",
+      "140*60*170": "10193770948880",
+      "160*60*170": "10193770948881",
+      "180*60*170": "10208381494396"
+    }
   },
+  "deep_geometry_status": "OPEN_NEEDS_DETAIL_PAGE_OR_USER_SESSION",
   "notes": [
     "JD mobile public HTML exposes embedded window._itemOnly / window._itemInfo product data without Apify.",
-    "The accepted run recovered the exact SKU row, full 8-color x 6-size matrix, three main product images, and ten large structured product/variant images.",
-    "Deep detail-page geometry such as leg inset, crossbar height, shelf depth and monitor-arm clamp clearance is not yet recovered; do not infer those dimensions from catalog imagery."
+    "Both the 120cm and 140cm black-walnut/black-frame variants independently passed the layout-usable acceptance gate.",
+    "Exact SKU row, 8-color x 6-size matrix, three main product images and ten large structured product/variant images are recovered without Apify CU.",
+    "Deep detail-page geometry such as leg inset, crossbar height, shelf depth and monitor-arm clamp clearance remains open; do not infer those dimensions from catalog imagery."
   ]
 }
