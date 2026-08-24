@@ -12,7 +12,7 @@ function timeoutSignal(ms = 15000) {
 }
 
 function decodeHtml(text = '') {
-  return text
+  return String(text)
     .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'")
@@ -23,7 +23,10 @@ function decodeHtml(text = '') {
 }
 
 function stripTags(text = '') {
-  return decodeHtml(text.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' '))
+  return decodeHtml(String(text)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' '))
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -47,7 +50,20 @@ function normalizeJdOriginal(url) {
 }
 
 function isJdImage(url) {
-  return /(?:360buyimg\.com|jdimg\.com)/i.test(url) && /\.(?:jpe?g|png|webp|gif|avif)(?:$|[?#])/i.test(url);
+  return /(?:360buyimg\.com|jdimg\.com)/i.test(url)
+    && /\.(?:jpe?g|png|webp|gif|avif)(?:$|[?#])/i.test(url);
+}
+
+function isNoiseJdImage(url) {
+  const lower = String(url).toLowerCase();
+  const bad = [
+    'error-new', 'try_03', 'try1_07', 'yinying_06', 'error_06',
+    '/jsresource/risk/', '/risk/static/', '/ling/jfs/',
+    'businesslicense', 'business-license', 'certificate', 'certification',
+    'qualification', 'licence', 'license', 'permit', 'wenwangwen',
+    'qrcode', 'qr-code', 'sprite', 'loading', 'transparent', 'default.image',
+  ];
+  return bad.some((word) => lower.includes(word));
 }
 
 function collectImageUrlsFromText(text = '') {
@@ -55,13 +71,13 @@ function collectImageUrlsFromText(text = '') {
   const decoded = String(text).replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
   const patterns = [
     /(?:https?:)?\/\/[^\s"'<>\\)]+?(?:360buyimg\.com|jdimg\.com)[^\s"'<>\\)]*?\.(?:jpe?g|png|webp|gif|avif)(?:\?[^\s"'<>\\)]*)?/gi,
-    /(?:src|data-src|data-lazy-img|data-lazyload|data-original)=["']([^"']+)["']/gi,
+    /(?:src|data-src|data-lazy-img|data-lazyload|data-original|data-origin|data-url)=["']([^"']+)["']/gi,
   ];
   for (const pattern of patterns) {
     let match;
     while ((match = pattern.exec(decoded)) !== null) {
       const url = normalizeJdOriginal(match[1] ?? match[0]);
-      if (url && isJdImage(url)) urls.add(url);
+      if (url && isJdImage(url) && !isNoiseJdImage(url)) urls.add(url);
     }
   }
   return [...urls];
@@ -70,16 +86,19 @@ function collectImageUrlsFromText(text = '') {
 function collectImageUrlsFromPayload(value, seen = new Set(), depth = 0) {
   if (value == null || depth > 6) return [];
   if (typeof value === 'string') return collectImageUrlsFromText(value);
-  if (typeof value !== 'object') return [];
-  if (seen.has(value)) return [];
+  if (typeof value !== 'object' || seen.has(value)) return [];
   seen.add(value);
   const urls = [];
-  if (Array.isArray(value)) {
-    for (const entry of value) urls.push(...collectImageUrlsFromPayload(entry, seen, depth + 1));
-  } else {
-    for (const entry of Object.values(value)) urls.push(...collectImageUrlsFromPayload(entry, seen, depth + 1));
-  }
-  return [...new Set(urls.map(normalizeJdOriginal).filter(Boolean))];
+  const values = Array.isArray(value) ? value : Object.values(value);
+  for (const entry of values) urls.push(...collectImageUrlsFromPayload(entry, seen, depth + 1));
+  return [...new Set(urls.map(normalizeJdOriginal).filter((url) => url && !isNoiseJdImage(url)))];
+}
+
+function blockedJdResponse(finalUrl = '', text = '') {
+  const url = String(finalUrl).toLowerCase();
+  if (/passport\.jd\.com|\/risk_handler\/|\/error2\.aspx|safe\.jd\.com|sec\.jd\.com/.test(url)) return true;
+  const title = stripTags(String(text).match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '');
+  return /京东验证|安全验证|访问验证|登录京东|京东登录|页面不存在|访问受限/i.test(title);
 }
 
 async function fetchText(url, { referer, timeoutMs = 15000, accept = '*/*' } = {}) {
@@ -100,6 +119,7 @@ async function fetchText(url, { referer, timeoutMs = 15000, accept = '*/*' } = {
     status: response.status,
     ok: response.ok,
     contentType: response.headers.get('content-type') ?? '',
+    blocked: blockedJdResponse(response.url, text),
     text,
   };
 }
@@ -130,7 +150,7 @@ function parseJdTitle(html = '') {
   for (const candidate of candidates) {
     if (!candidate) continue;
     const title = stripTags(candidate).replace(/\s*[-—_]\s*京东.*$/i, '').trim();
-    if (title && !/登录京东|京东登录/i.test(title)) return title;
+    if (title && !/登录京东|京东登录|京东验证|安全验证|访问验证|页面不存在|访问受限/i.test(title)) return title;
   }
   return null;
 }
@@ -152,28 +172,77 @@ function parseJdParameters(html = '') {
 }
 
 function extractGraphicContent(payload, raw = '') {
-  const candidates = [
-    payload?.data?.graphicContent,
-    payload?.graphicContent,
-    payload?.data?.content,
-    payload?.content,
-  ];
+  const candidates = [payload?.data?.graphicContent, payload?.graphicContent, payload?.data?.content, payload?.content];
   return candidates.find((value) => typeof value === 'string' && value.length > 20) ?? raw;
 }
 
+async function fetchJdPageCandidates(skuId) {
+  const urls = [
+    `https://item.jd.com/${skuId}.html`,
+    `https://item.m.jd.com/product/${skuId}.html`,
+    `https://item.m.jd.com/ware/view.action?wareId=${skuId}`,
+  ];
+  const attempts = [];
+  let selected = null;
+  for (const url of urls) {
+    try {
+      const response = await fetchText(url, {
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        timeoutMs: 20000,
+      });
+      const title = response.blocked ? null : parseJdTitle(response.text);
+      const parameters = response.blocked ? [] : parseJdParameters(response.text);
+      const images = response.blocked ? [] : collectImageUrlsFromText(response.text);
+      const row = { ...response, title, parameters, images };
+      attempts.push(row);
+      if (!selected && response.ok && !response.blocked && (title || parameters.length || images.length)) selected = row;
+    } catch (error) {
+      attempts.push({ requestedUrl: url, ok: false, blocked: false, error: error?.message ?? String(error), text: '', title: null, parameters: [], images: [] });
+    }
+  }
+  return { attempts, selected };
+}
+
 async function fetchJdPrice(skuId, referer) {
-  const url = `https://p.3.cn/prices/mgets?type=1&skuIds=J_${encodeURIComponent(skuId)}`;
-  const response = await fetchText(url, { referer, accept: 'application/json,text/plain,*/*' });
-  return { ...response, data: parseJsonLoose(response.text) };
+  const urls = [
+    `https://p.3.cn/prices/mgets?type=1&skuIds=J_${encodeURIComponent(skuId)}`,
+    `http://p.3.cn/prices/mgets?type=1&skuIds=J_${encodeURIComponent(skuId)}`,
+  ];
+  const attempts = [];
+  for (const url of urls) {
+    try {
+      const response = await fetchText(url, { referer, accept: 'application/json,text/plain,*/*', timeoutMs: 12000 });
+      const data = parseJsonLoose(response.text);
+      attempts.push({ ...response, data });
+      if (response.ok && !response.blocked && Array.isArray(data) && data.length) return { attempts, data };
+    } catch (error) {
+      attempts.push({ requestedUrl: url, ok: false, error: error?.message ?? String(error), data: null });
+    }
+  }
+  return { attempts, data: null };
 }
 
 async function fetchJdWareGraphic(skuId, referer) {
   const body = encodeURIComponent(JSON.stringify({ skuId: String(skuId) }));
-  const url = `https://api.m.jd.com/client.action?appid=item-v3&functionId=pc_item_getWareGraphic&client=pc&clientVersion=1.0.0&body=${body}`;
-  const response = await fetchText(url, { referer, accept: 'application/json,text/plain,*/*', timeoutMs: 20000 });
-  const data = parseJsonLoose(response.text);
-  const content = extractGraphicContent(data, response.text);
-  return { ...response, data, imageUrls: collectImageUrlsFromText(content), contentLength: content.length };
+  const urls = [
+    `https://api.m.jd.com/client.action?appid=item-v3&functionId=pc_item_getWareGraphic&client=pc&clientVersion=1.0.0&body=${body}`,
+    `https://api.m.jd.com/api?appid=item-v3&functionId=pc_item_getWareGraphic&client=pc&clientVersion=1.0.0&body=${body}`,
+  ];
+  const attempts = [];
+  for (const url of urls) {
+    try {
+      const response = await fetchText(url, { referer, accept: 'application/json,text/plain,*/*', timeoutMs: 20000 });
+      const data = parseJsonLoose(response.text);
+      const content = extractGraphicContent(data, response.text);
+      const imageUrls = response.blocked ? [] : collectImageUrlsFromText(content);
+      const row = { ...response, data, imageUrls, contentLength: content.length };
+      attempts.push(row);
+      if (response.ok && !response.blocked && imageUrls.length) return { attempts, selected: row };
+    } catch (error) {
+      attempts.push({ requestedUrl: url, ok: false, blocked: false, error: error?.message ?? String(error), data: null, imageUrls: [] });
+    }
+  }
+  return { attempts, selected: null };
 }
 
 async function fetchJdLegacyDescriptions(skuId, referer) {
@@ -187,17 +256,10 @@ async function fetchJdLegacyDescriptions(skuId, referer) {
       const response = await fetchText(url, { referer, timeoutMs: 15000 });
       const data = parseJsonLoose(response.text);
       const content = extractGraphicContent(data, response.text);
-      attempts.push({
-        url,
-        status: response.status,
-        ok: response.ok,
-        finalUrl: response.finalUrl,
-        data,
-        raw: response.text,
-        imageUrls: collectImageUrlsFromText(content),
-      });
+      const imageUrls = response.blocked ? [] : collectImageUrlsFromText(content);
+      attempts.push({ ...response, data, raw: response.text, imageUrls });
     } catch (error) {
-      attempts.push({ url, ok: false, error: error?.message ?? String(error), imageUrls: [] });
+      attempts.push({ requestedUrl: url, ok: false, blocked: false, error: error?.message ?? String(error), imageUrls: [] });
     }
   }
   return attempts;
@@ -207,10 +269,10 @@ async function fetchJdItemSoa(skuId, referer) {
   const url = `https://item-soa.jd.com/getWareBusiness?skuId=${encodeURIComponent(skuId)}`;
   try {
     const response = await fetchText(url, { referer, accept: 'application/json,text/plain,*/*', timeoutMs: 15000 });
-    const data = parseJsonLoose(response.text);
-    return { ...response, data, imageUrls: collectImageUrlsFromPayload(data) };
+    const data = response.blocked ? null : parseJsonLoose(response.text);
+    return { ...response, data, imageUrls: response.blocked ? [] : collectImageUrlsFromPayload(data) };
   } catch (error) {
-    return { requestedUrl: url, ok: false, error: error?.message ?? String(error), data: null, imageUrls: [] };
+    return { requestedUrl: url, ok: false, blocked: false, error: error?.message ?? String(error), data: null, imageUrls: [] };
   }
 }
 
@@ -219,14 +281,18 @@ async function fetchJdReviewSummary(skuId, referer) {
     `https://club.jd.com/comment/productCommentSummaries.action?referenceIds=${encodeURIComponent(skuId)}`,
     `https://sclub.jd.com/comment/productPageComments.action?productId=${encodeURIComponent(skuId)}&score=0&sortType=5&page=0&pageSize=10&isShadowSku=0&fold=1`,
   ];
+  const attempts = [];
   for (const url of candidates) {
     try {
       const response = await fetchText(url, { referer, accept: 'application/json,text/plain,*/*', timeoutMs: 15000 });
-      const data = parseJsonLoose(response.text);
-      if (response.ok && data) return { ...response, data };
-    } catch { /* try next public endpoint */ }
+      const data = response.blocked ? null : parseJsonLoose(response.text);
+      attempts.push({ ...response, data });
+      if (response.ok && !response.blocked && data) return { attempts, data };
+    } catch (error) {
+      attempts.push({ requestedUrl: url, ok: false, blocked: false, error: error?.message ?? String(error), data: null });
+    }
   }
-  return { ok: false, data: null };
+  return { attempts, data: null };
 }
 
 function extensionFor(contentType = '', url = '') {
@@ -244,7 +310,7 @@ function rankImages({ detail = [], html = [], soa = [] }) {
   const map = new Map();
   const add = (url, source, priority) => {
     const normalized = normalizeJdOriginal(url);
-    if (!normalized || !isJdImage(normalized)) return;
+    if (!normalized || !isJdImage(normalized) || isNoiseJdImage(normalized)) return;
     const existing = map.get(normalized);
     if (!existing || priority < existing.priority) map.set(normalized, { url: normalized, source, priority });
   };
@@ -300,72 +366,76 @@ async function writeJson(outputDir, name, value) {
   await fs.writeFile(path.join(outputDir, name), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function compactAttempt(entry) {
+  return {
+    requestedUrl: entry.requestedUrl,
+    finalUrl: entry.finalUrl ?? null,
+    status: entry.status ?? null,
+    ok: Boolean(entry.ok),
+    blocked: Boolean(entry.blocked),
+    error: entry.error ?? null,
+    title: entry.title ?? null,
+    parameterCount: entry.parameters?.length ?? 0,
+    imageCount: entry.images?.length ?? entry.imageUrls?.length ?? 0,
+  };
+}
+
 async function inspectJd(product, outputDir, options = {}) {
-  const itemUrl = product.canonicalUrl;
   const skuId = product.itemId;
+  const itemUrl = product.canonicalUrl;
   const maxImages = Number(options.maxImages ?? process.env.MAX_IMAGES ?? DEFAULT_MAX_IMAGES);
   const result = {
-    site: 'jd',
-    skuId,
-    canonicalUrl: itemUrl,
-    inspectedAt: new Date().toISOString(),
-    execution: 'zero-cu-http',
-    requests: {},
-    title: null,
-    parameters: [],
-    price: null,
-    reviewSummary: null,
-    imageEvidence: null,
+    site: 'jd', skuId, canonicalUrl: itemUrl, inspectedAt: new Date().toISOString(), execution: 'zero-cu-http',
+    requests: {}, title: null, parameters: [], price: null, reviewSummary: null, imageEvidence: null,
   };
 
-  let html = '';
-  try {
-    const page = await fetchText(itemUrl, { accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', timeoutMs: 20000 });
-    html = page.text;
-    result.requests.itemPage = { status: page.status, ok: page.ok, finalUrl: page.finalUrl, bytes: Buffer.byteLength(html), loginRedirect: /passport\.jd\.com|登录京东|京东登录/i.test(`${page.finalUrl}\n${html.slice(0, 20000)}`) };
-    if (html) await fs.writeFile(path.join(outputDir, 'PAGE.html'), html, 'utf8');
-    result.title = parseJdTitle(html);
-    result.parameters = parseJdParameters(html);
-  } catch (error) {
-    result.requests.itemPage = { ok: false, error: error?.message ?? String(error) };
+  const pages = await fetchJdPageCandidates(skuId);
+  result.requests.itemPages = pages.attempts.map(compactAttempt);
+  result.publicPageBlocked = pages.attempts.length > 0 && pages.attempts.every((x) => x.blocked || !x.ok);
+  if (pages.selected) {
+    result.title = pages.selected.title;
+    result.parameters = pages.selected.parameters;
+    await fs.writeFile(path.join(outputDir, 'PAGE.html'), pages.selected.text, 'utf8');
+  } else if (pages.attempts[0]?.text) {
+    await fs.writeFile(path.join(outputDir, 'PAGE_BLOCKED.html'), pages.attempts[0].text, 'utf8');
   }
+  await writeJson(outputDir, 'PAGE_ATTEMPTS.json', result.requests.itemPages);
 
   const [price, wareGraphic, legacyDescriptions, itemSoa, reviews] = await Promise.all([
-    fetchJdPrice(skuId, itemUrl).catch((error) => ({ ok: false, error: error?.message ?? String(error), data: null })),
-    fetchJdWareGraphic(skuId, itemUrl).catch((error) => ({ ok: false, error: error?.message ?? String(error), data: null, imageUrls: [] })),
+    fetchJdPrice(skuId, itemUrl),
+    fetchJdWareGraphic(skuId, itemUrl),
     fetchJdLegacyDescriptions(skuId, itemUrl),
     fetchJdItemSoa(skuId, itemUrl),
     fetchJdReviewSummary(skuId, itemUrl),
   ]);
 
-  result.requests.price = { status: price.status, ok: price.ok, finalUrl: price.finalUrl, error: price.error ?? null };
+  result.requests.price = price.attempts.map(compactAttempt);
   result.price = Array.isArray(price.data) ? price.data[0] ?? null : price.data;
-  await writeJson(outputDir, 'PRICE.json', price.data ?? { error: price.error ?? 'unavailable' });
+  await writeJson(outputDir, 'PRICE.json', price.data ?? { attempts: result.requests.price, error: 'unavailable' });
 
-  result.requests.wareGraphic = { status: wareGraphic.status, ok: wareGraphic.ok, finalUrl: wareGraphic.finalUrl, error: wareGraphic.error ?? null, imageCount: wareGraphic.imageUrls?.length ?? 0 };
-  await writeJson(outputDir, 'WARE_GRAPHIC.json', wareGraphic.data ?? { error: wareGraphic.error ?? 'unavailable' });
-  if (wareGraphic.text) await fs.writeFile(path.join(outputDir, 'WARE_GRAPHIC_RAW.txt'), wareGraphic.text, 'utf8');
+  result.requests.wareGraphic = wareGraphic.attempts.map(compactAttempt);
+  await writeJson(outputDir, 'WARE_GRAPHIC.json', wareGraphic.selected?.data ?? { attempts: result.requests.wareGraphic, error: 'unavailable' });
+  if (wareGraphic.selected?.text) await fs.writeFile(path.join(outputDir, 'WARE_GRAPHIC_RAW.txt'), wareGraphic.selected.text, 'utf8');
 
-  result.requests.itemSoa = { status: itemSoa.status, ok: itemSoa.ok, finalUrl: itemSoa.finalUrl, error: itemSoa.error ?? null, imageCount: itemSoa.imageUrls?.length ?? 0 };
-  await writeJson(outputDir, 'ITEM_SOA.json', itemSoa.data ?? { error: itemSoa.error ?? 'unavailable' });
+  result.requests.itemSoa = compactAttempt(itemSoa);
+  await writeJson(outputDir, 'ITEM_SOA.json', itemSoa.data ?? { error: itemSoa.blocked ? 'blocked/error redirect' : itemSoa.error ?? 'unavailable' });
 
-  result.requests.reviews = { status: reviews.status, ok: reviews.ok, finalUrl: reviews.finalUrl, error: reviews.error ?? null };
+  result.requests.reviews = reviews.attempts.map(compactAttempt);
   result.reviewSummary = reviews.data;
-  await writeJson(outputDir, 'REVIEWS.json', reviews.data ?? { error: reviews.error ?? 'unavailable' });
+  await writeJson(outputDir, 'REVIEWS.json', reviews.data ?? { attempts: result.requests.reviews, error: 'unavailable' });
 
-  const legacySummary = legacyDescriptions.map((entry) => ({ url: entry.url, status: entry.status, ok: entry.ok, finalUrl: entry.finalUrl, error: entry.error ?? null, imageCount: entry.imageUrls?.length ?? 0 }));
-  result.requests.legacyDescriptions = legacySummary;
-  await writeJson(outputDir, 'LEGACY_DESCRIPTIONS.json', legacySummary);
+  result.requests.legacyDescriptions = legacyDescriptions.map(compactAttempt);
+  await writeJson(outputDir, 'LEGACY_DESCRIPTIONS.json', result.requests.legacyDescriptions);
   for (const [index, entry] of legacyDescriptions.entries()) {
     if (entry.raw) await fs.writeFile(path.join(outputDir, `LEGACY_DESC_${index + 1}.txt`), entry.raw, 'utf8');
   }
 
   const detailImages = [
-    ...(wareGraphic.imageUrls ?? []),
-    ...legacyDescriptions.flatMap((entry) => entry.imageUrls ?? []),
-  ];
-  const htmlImages = collectImageUrlsFromText(html);
-  const soaImages = itemSoa.imageUrls ?? [];
+    ...(wareGraphic.selected?.imageUrls ?? []),
+    ...legacyDescriptions.flatMap((entry) => entry.blocked ? [] : entry.imageUrls ?? []),
+  ].filter((url) => !isNoiseJdImage(url));
+  const htmlImages = pages.selected?.images ?? [];
+  const soaImages = itemSoa.blocked ? [] : itemSoa.imageUrls ?? [];
   const rankedImages = rankImages({ detail: detailImages, html: htmlImages, soa: soaImages });
   const imageEvidence = await downloadImages(rankedImages, outputDir, itemUrl, maxImages);
   result.imageEvidence = {
@@ -378,46 +448,50 @@ async function inspectJd(product, outputDir, options = {}) {
   await writeJson(outputDir, 'IMAGE_MANIFEST.json', result.imageEvidence);
 
   const priceValue = result.price?.p ?? result.price?.op ?? null;
-  result.usable = Boolean(result.title || priceValue || result.imageEvidence.saved > 0 || result.parameters.length);
+  const engineeringUsable = result.parameters.length > 0 || result.imageEvidence.detailDiscovered > 0;
+  const metadataUsable = Boolean(result.title || priceValue);
+  result.usable = engineeringUsable || metadataUsable;
+  result.evidenceClass = engineeringUsable ? 'ENGINEERING_USABLE' : metadataUsable ? 'METADATA_ONLY' : 'BLOCKED_OR_EMPTY';
   result.engineeringEvidence = {
     title: Boolean(result.title),
     price: Boolean(priceValue),
     parameters: result.parameters.length,
     detailImages: result.imageEvidence.detailDiscovered,
     savedImages: result.imageEvidence.saved,
-    browserRequired: !result.title && result.imageEvidence.detailDiscovered === 0,
+    engineeringUsable,
+    browserOrUserSessionNeeded: !engineeringUsable,
   };
   return result;
 }
 
 async function inspectPassivePage(product, outputDir, options = {}) {
   const response = await fetchText(product.canonicalUrl, { accept: 'text/html,application/xhtml+xml,*/*', timeoutMs: 20000 });
-  await fs.writeFile(path.join(outputDir, 'PAGE.html'), response.text, 'utf8');
-  const imageUrls = product.site === 'taobao' || product.site === 'tmall'
+  await fs.writeFile(path.join(outputDir, response.blocked ? 'PAGE_BLOCKED.html' : 'PAGE.html'), response.text, 'utf8');
+  const imageUrls = response.blocked ? [] : (product.site === 'taobao' || product.site === 'tmall'
     ? [...new Set([...response.text.matchAll(/(?:https?:)?\/\/[^\s"'<>\\)]+?(?:alicdn\.com|tbcdn\.cn)[^\s"'<>\\)]*?\.(?:jpe?g|png|webp)(?:\?[^\s"'<>\\)]*)?/gi)].map((match) => normalizeImageUrl(match[0])).filter(Boolean))]
-    : [];
-  const title = stripTags(response.text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '') || null;
-  const result = {
+    : []);
+  const title = response.blocked ? null : stripTags(response.text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '') || null;
+  return {
     site: product.site,
     itemId: product.itemId,
     canonicalUrl: product.canonicalUrl,
     inspectedAt: new Date().toISOString(),
     execution: 'zero-cu-passive-http',
     title,
-    page: { status: response.status, ok: response.ok, finalUrl: response.finalUrl, bytes: Buffer.byteLength(response.text) },
+    page: { status: response.status, ok: response.ok, blocked: response.blocked, finalUrl: response.finalUrl, bytes: Buffer.byteLength(response.text) },
     publicImageUrls: imageUrls.slice(0, Number(options.maxImages ?? DEFAULT_MAX_IMAGES)),
     usable: Boolean(title || imageUrls.length),
+    evidenceClass: title || imageUrls.length ? 'METADATA_ONLY' : 'BLOCKED_OR_EMPTY',
     note: 'Taobao/Tmall zero-CU support is passive-only in v0.5; no signed/private API or access-control bypass is attempted.',
   };
-  return result;
 }
 
 export async function zeroCuInspect(url, outputDir = 'zero-cu-results', options = {}) {
   await fs.mkdir(outputDir, { recursive: true });
   const product = identifyProduct(url);
-  let summary;
-  if (product.site === 'jd' && product.itemId) summary = await inspectJd(product, outputDir, options);
-  else summary = await inspectPassivePage(product, outputDir, options);
+  const summary = product.site === 'jd' && product.itemId
+    ? await inspectJd(product, outputDir, options)
+    : await inspectPassivePage(product, outputDir, options);
   await writeJson(outputDir, 'ZERO_CU_SUMMARY.json', summary);
   return summary;
 }
