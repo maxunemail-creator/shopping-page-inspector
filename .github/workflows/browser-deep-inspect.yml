@@ -1,0 +1,134 @@
+name: Browser-deep product inspection (free public runner)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deep-request.json'
+      - 'tools/browser-deep/**'
+      - '.github/workflows/browser-deep-inspect.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deep-request.json'
+      - 'tools/browser-deep/**'
+      - '.github/workflows/browser-deep-inspect.yml'
+  workflow_dispatch:
+    inputs:
+      product_url:
+        description: 'Optional product URL; defaults to deep-request.json'
+        required: false
+        type: string
+      max_images:
+        description: 'Maximum useful detail images to save'
+        required: false
+        default: '30'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-deep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deep-inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install lightweight browser client
+        run: npm install --prefix tools/browser-deep --omit=dev --audit=false --fund=false
+
+      - name: Locate system Chrome
+        id: chrome
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME_PATH="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -z "$CHROME_PATH" ] && [ -x /opt/google/chrome/chrome ]; then CHROME_PATH=/opt/google/chrome/chrome; fi
+          test -n "$CHROME_PATH"
+          echo "path=$CHROME_PATH" >> "$GITHUB_OUTPUT"
+          "$CHROME_PATH" --version
+
+      - name: Resolve request
+        id: request
+        shell: bash
+        env:
+          INPUT_URL: ${{ inputs.product_url }}
+          INPUT_MAX_IMAGES: ${{ inputs.max_images }}
+        run: |
+          set -euo pipefail
+          FILE_URL=$(node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync('deep-request.json','utf8'));process.stdout.write(String(x.url||''));")
+          FILE_MAX=$(node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync('deep-request.json','utf8'));process.stdout.write(String(x.maxImages||30));")
+          URL="${INPUT_URL:-$FILE_URL}"
+          MAX="${INPUT_MAX_IMAGES:-$FILE_MAX}"
+          test -n "$URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "max_images=$MAX" >> "$GITHUB_OUTPUT"
+
+      - name: Run browser-deep inspection
+        id: browser
+        continue-on-error: true
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.path }}
+        shell: bash
+        run: |
+          set -o pipefail
+          rm -rf browser-deep-results
+          node tools/browser-deep/deep-jd.js \
+            "${{ steps.request.outputs.url }}" \
+            browser-deep-results \
+            "${{ steps.request.outputs.max_images }}" \
+            | tee browser-deep-console.txt
+
+      - name: Publish summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Browser-deep product inspection'
+            echo
+            echo '- URL: `${{ steps.request.outputs.url }}`'
+            echo '- Runner outcome: `${{ steps.browser.outcome }}`'
+            if [ -f browser-deep-results/BROWSER_SUMMARY.json ]; then
+              echo '- Final URL: `'$(jq -r '.finalUrl // "n/a"' browser-deep-results/BROWSER_SUMMARY.json)'`'
+              echo '- Title: '$(jq -r '.title // "n/a"' browser-deep-results/BROWSER_SUMMARY.json)
+              echo '- Blocked markers: `'$(jq -c '.blockedMarkers // []' browser-deep-results/BROWSER_SUMMARY.json)'`'
+              echo '- Detail DOM present: `'$(jq -r '.detailDomPresent // false' browser-deep-results/BROWSER_SUMMARY.json)'`'
+              echo '- Captured network responses: `'$(jq -r '.networkResponsesCaptured // 0' browser-deep-results/BROWSER_SUMMARY.json)'`'
+              echo '- wareGraphic responses: `'$(jq -r '.wareGraphicResponses // 0' browser-deep-results/BROWSER_SUMMARY.json)'`'
+              echo '- Detail responses: `'$(jq -r '.detailResponses // 0' browser-deep-results/BROWSER_SUMMARY.json)'`'
+              echo '- DOM detail images: `'$(jq -r '.domDetailImages // 0' browser-deep-results/BROWSER_SUMMARY.json)'`'
+              echo '- Saved useful images: `'$(jq -r '.savedUsefulImages // 0' browser-deep-results/BROWSER_SUMMARY.json)'`'
+              echo '- Saved detail images: `'$(jq -r '.savedDetailImages // 0' browser-deep-results/BROWSER_SUMMARY.json)'`'
+              echo '- Deep geometry candidate: `'$(jq -r '.deepGeometryCandidate // false' browser-deep-results/BROWSER_SUMMARY.json)'`'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-deep-evidence-${{ github.run_id }}
+          path: |
+            browser-deep-results/
+            browser-deep-console.txt
+          if-no-files-found: warn
+          retention-days: 5
+          compression-level: 6
+
+      - name: Require evidence bundle
+        if: always()
+        shell: bash
+        run: |
+          test -f browser-deep-results/BROWSER_SUMMARY.json || test -f browser-deep-results/BROWSER_FATAL.json
