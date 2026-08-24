@@ -1,0 +1,9 @@
+{
+  "name": "shopping-page-inspector-browser-deep",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "1.62.1"
+  }
+}
