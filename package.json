@@ -1,13 +1,13 @@
 {
   "name": "shopping-page-inspector-actor",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node src/main.js",
-    "zero-cu": "node src/zero-cu.js",
+    "zero-cu": "node src/zero-cu-runner.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/main.js && node --check src/url.js && node --check src/structured.js && node --check src/structured-images.js && node --check src/jd-description.js && node --check src/deep-capture.js && node --check src/zero-cu.js"
+    "check": "node --check src/main.js && node --check src/url.js && node --check src/structured.js && node --check src/structured-images.js && node --check src/jd-description.js && node --check src/deep-capture.js && node --check src/zero-cu.js && node --check src/jd-mobile-fallback.js && node --check src/zero-cu-runner.js"
   },
   "dependencies": {
     "apify": "^3.4.4",
