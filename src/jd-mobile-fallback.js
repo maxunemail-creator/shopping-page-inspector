@@ -1,8 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { extractJdMobileStructured } from './jd-mobile-structured.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const USEFUL_IMAGE_BYTES = 20 * 1024;
 
 function decode(text = '') {
   return String(text)
@@ -69,7 +71,7 @@ function imageRank(url, context) {
   return 3;
 }
 
-function collectImages(html) {
+function collectPageImages(html) {
   const decoded = decode(html);
   const pattern = /(?:https?:)?\/\/[^\s"'<>\\)]+?(?:360buyimg\.com|jdimg\.com)[^\s"'<>\\)]*?\.(?:jpe?g|png|webp|gif|avif)(?:\?[^\s"'<>\\)]*)?/gi;
   const map = new Map();
@@ -81,12 +83,38 @@ function collectImages(html) {
     const context = decoded.slice(Math.max(0, match.index - 300), Math.min(decoded.length, match.index + match[0].length + 300));
     const rank = imageRank(url, context);
     const old = map.get(url);
-    if (!old || rank < old.rank) map.set(url, { url, rank, sequence: sequence++, contextHint: /detail|graphic|description|waregraphic|图文|详情/i.test(context) });
+    const row = { url, rank, sequence: sequence++, source: 'page-scan', contextHint: /detail|graphic|description|waregraphic|图文|详情/i.test(context) };
+    if (!old || rank < old.rank) map.set(url, row);
   }
   return [...map.values()].sort((a, b) => a.rank - b.rank || a.sequence - b.sequence);
 }
 
-function collectHints(html) {
+function structuredImageCandidates(structured) {
+  if (!structured) return [];
+  const rows = [];
+  let sequence = -1000;
+  const add = (url, rank, source) => {
+    const normalized = normalize(url);
+    if (!normalized || isNoise(normalized)) return;
+    if (rows.some((row) => row.url === normalized)) return;
+    rows.push({ url: normalized, rank, sequence: sequence++, source, contextHint: source === 'exact-sku' });
+  };
+  add(structured.selectedImageUrl, -3, 'exact-sku');
+  for (const url of structured.mainImageUrls ?? []) add(url, -2, 'main-image');
+  for (const url of structured.uniqueVariantImageUrls ?? []) add(url, -1, 'variant-image');
+  return rows;
+}
+
+function mergeCandidates(structuredRows, pageRows) {
+  const map = new Map();
+  for (const row of [...structuredRows, ...pageRows]) {
+    const old = map.get(row.url);
+    if (!old || row.rank < old.rank) map.set(row.url, row);
+  }
+  return [...map.values()].sort((a, b) => a.rank - b.rank || a.sequence - b.sequence);
+}
+
+function collectHints(html, structured) {
   const text = decode(html);
   const patterns = [
     /\b\d{2,4}\s*(?:\*|x|X|×)\s*\d{2,4}(?:\s*(?:\*|x|X|×)\s*\d{2,4})?\s*(?:cm|mm|厘米|毫米)?/g,
@@ -102,6 +130,8 @@ function collectHints(html) {
     }
     if (hints.length >= 80) break;
   }
+  if (structured?.selectedVariant?.size) hints.unshift(structured.selectedVariant.size);
+  if (structured?.selectedVariant?.color) hints.unshift(structured.selectedVariant.color);
   return [...new Set(hints)];
 }
 
@@ -121,7 +151,7 @@ async function downloadImages(images, outputDir, referer, maxImages) {
   const selected = images.slice(0, maxImages);
   const manifest = [];
   for (const [index, item] of selected.entries()) {
-    const row = { ...item, index: index + 1, saved: false, file: null, bytes: 0, contentType: null, error: null };
+    const row = { ...item, index: index + 1, saved: false, usefulByBytes: false, file: null, bytes: 0, contentType: null, error: null };
     try {
       const response = await fetch(item.url, {
         redirect: 'follow',
@@ -133,9 +163,11 @@ async function downloadImages(images, outputDir, referer, maxImages) {
       if (!contentType.startsWith('image/')) throw new Error(`not-image:${contentType}`);
       const bytes = Buffer.from(await response.arrayBuffer());
       if (bytes.length > MAX_IMAGE_BYTES) throw new Error(`image-too-large:${bytes.length}`);
-      const file = `${String(index + 1).padStart(2, '0')}_r${item.rank}.${extensionFor(contentType, item.url)}`;
+      const safeSource = String(item.source ?? `r${item.rank}`).replace(/[^a-z0-9-]/gi, '_');
+      const file = `${String(index + 1).padStart(2, '0')}_${safeSource}.${extensionFor(contentType, item.url)}`;
       await fs.writeFile(path.join(dir, file), bytes);
       row.saved = true;
+      row.usefulByBytes = bytes.length >= USEFUL_IMAGE_BYTES;
       row.file = `mobile-images/${file}`;
       row.bytes = bytes.length;
       row.contentType = contentType;
@@ -170,13 +202,26 @@ export async function augmentWithJdMobile(summary, outputDir, { maxImages = 40 }
     return summary;
   }
 
-  const title = productTitle(html);
-  const images = collectImages(html);
-  const hints = collectHints(html);
+  const structured = extractJdMobileStructured(html, summary.skuId);
+  if (structured) await fs.writeFile(path.join(outputDir, 'JD_MOBILE_STRUCTURED.json'), `${JSON.stringify(structured, null, 2)}\n`, 'utf8');
+
+  const title = structured?.skuName ?? productTitle(html);
+  const structuredCandidates = structuredImageCandidates(structured);
+  const pageCandidates = collectPageImages(html);
+  const images = mergeCandidates(structuredCandidates, pageCandidates);
+  await fs.writeFile(path.join(outputDir, 'MOBILE_ALL_IMAGE_CANDIDATES.json'), `${JSON.stringify(images, null, 2)}\n`, 'utf8');
+  const hints = collectHints(html, structured);
   const manifest = await downloadImages(images, outputDir, url, Number(maxImages) || 40);
   const saved = manifest.filter((x) => x.saved).length;
-  const highConfidence = manifest.filter((x) => x.saved && x.rank <= 1).length;
-  const detailContext = images.filter((x) => x.contextHint || x.rank <= 1).length;
+  const useful = manifest.filter((x) => x.saved && x.usefulByBytes).length;
+  const structuredSaved = manifest.filter((x) => x.saved && ['exact-sku', 'main-image', 'variant-image'].includes(x.source)).length;
+  const structuredUseful = manifest.filter((x) => x.saved && x.usefulByBytes && ['exact-sku', 'main-image', 'variant-image'].includes(x.source)).length;
+  const pageDetailUseful = manifest.filter((x) => x.saved && x.usefulByBytes && x.source === 'page-scan' && (x.contextHint || x.rank === 0)).length;
+  const exactSkuSaved = manifest.some((x) => x.saved && x.source === 'exact-sku');
+  const advertisedSize = structured?.selectedVariant?.size ?? structured?.rawProductFields?.size ?? null;
+  const advertisedColor = structured?.selectedVariant?.color ?? structured?.rawProductFields?.color ?? null;
+  const layoutUsable = Boolean(advertisedSize && exactSkuSaved && structuredUseful >= 1);
+  const detailGeometryUsable = pageDetailUseful >= 1;
 
   const mobile = {
     url,
@@ -186,10 +231,17 @@ export async function augmentWithJdMobile(summary, outputDir, { maxImages = 40 }
     blocked: false,
     bytes: Buffer.byteLength(html),
     title,
+    structured,
+    advertisedSize,
+    advertisedColor,
     discoveredImages: images.length,
-    detailContextCandidates: detailContext,
+    pageScannedImages: pageCandidates.length,
+    structuredImageCandidates: structuredCandidates.length,
     downloadedImages: saved,
-    highConfidenceImages: highConfidence,
+    usefulImages: useful,
+    structuredSavedImages: structuredSaved,
+    structuredUsefulImages: structuredUseful,
+    pageDetailUsefulImages: pageDetailUseful,
     hints,
     images: manifest,
   };
@@ -197,22 +249,35 @@ export async function augmentWithJdMobile(summary, outputDir, { maxImages = 40 }
 
   summary.mobileFallback = mobile;
   if (!summary.title && title) summary.title = title;
-  const hasUsefulImageSet = Boolean(title && saved >= 5);
-  const hasEngineeringHints = hints.some((x) => /(?:\*|x|X|×).*?(?:\*|x|X|×)|mm|洞洞板|桌板厚度|桌腿|横梁/i.test(x));
-  summary.usable = summary.usable || Boolean(title || saved);
-  if (hasUsefulImageSet || hasEngineeringHints) {
-    summary.evidenceClass = detailContext > 0 || hasEngineeringHints ? 'ENGINEERING_CANDIDATE' : summary.evidenceClass;
-    summary.engineeringEvidence = {
-      ...(summary.engineeringEvidence ?? {}),
-      mobileCandidateImages: images.length,
-      mobileSavedImages: saved,
-      mobileHighConfidenceImages: highConfidence,
-      mobileDetailContextCandidates: detailContext,
-      mobileHintCount: hints.length,
-      engineeringUsable: Boolean((detailContext > 0 && saved >= 3) || hasEngineeringHints),
-      browserOrUserSessionNeeded: !((detailContext > 0 && saved >= 3) || hasEngineeringHints),
-    };
-  }
+  summary.selectedVariant = structured?.selectedVariant ?? null;
+  summary.variantMatrix = structured ? {
+    brandName: structured.brandName,
+    colors: structured.colors,
+    sizes: structured.sizes,
+    variantCount: structured.variants.length,
+  } : null;
+  summary.usable = summary.usable || Boolean(title || saved || advertisedSize);
+  summary.evidenceClass = detailGeometryUsable ? 'DETAIL_ENGINEERING_CANDIDATE' : layoutUsable ? 'LAYOUT_USABLE' : summary.evidenceClass;
+  summary.engineeringEvidence = {
+    ...(summary.engineeringEvidence ?? {}),
+    advertisedSize,
+    advertisedColor,
+    exactVariantMatched: Boolean(structured?.selectedVariant),
+    variantCount: structured?.variants?.length ?? 0,
+    mainImageCount: structured?.mainImageUrls?.length ?? 0,
+    mobileCandidateImages: images.length,
+    mobileSavedImages: saved,
+    mobileUsefulImages: useful,
+    structuredSavedImages: structuredSaved,
+    structuredUsefulImages: structuredUseful,
+    pageDetailUsefulImages: pageDetailUseful,
+    mobileHintCount: hints.length,
+    layoutUsable,
+    detailGeometryUsable,
+    engineeringUsable: layoutUsable || detailGeometryUsable,
+    browserOrUserSessionNeeded: !(layoutUsable || detailGeometryUsable),
+    browserOrUserSessionNeededForDeepGeometry: !detailGeometryUsable,
+  };
   await fs.writeFile(path.join(outputDir, 'ZERO_CU_SUMMARY.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
   return summary;
 }
