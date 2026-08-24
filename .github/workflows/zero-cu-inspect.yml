@@ -6,8 +6,10 @@ on:
     paths:
       - 'src/zero-cu.js'
       - 'src/zero-cu-runner.js'
+      - 'src/jd-mobile-structured.js'
       - 'src/jd-mobile-fallback.js'
       - 'src/url.js'
+      - 'test/**'
       - 'package.json'
       - 'request.json'
       - '.github/workflows/zero-cu-inspect.yml'
@@ -16,8 +18,10 @@ on:
     paths:
       - 'src/zero-cu.js'
       - 'src/zero-cu-runner.js'
+      - 'src/jd-mobile-structured.js'
       - 'src/jd-mobile-fallback.js'
       - 'src/url.js'
+      - 'test/**'
       - 'package.json'
       - 'request.json'
       - '.github/workflows/zero-cu-inspect.yml'
@@ -101,13 +105,16 @@ jobs:
               echo '- SKU: `'$(jq -r '.skuId // .itemId // "n/a"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
               echo '- Title: '$(jq -r '.title // "(not recovered)"' zero-cu-results/ZERO_CU_SUMMARY.json)
               echo '- Evidence class: `'$(jq -r '.evidenceClass // "unknown"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Engineering usable: `'$(jq -r '.engineeringEvidence.engineeringUsable // false' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Base detail images: `'$(jq -r '.imageEvidence.detailDiscovered // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Mobile candidates: `'$(jq -r '.engineeringEvidence.mobileCandidateImages // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Mobile saved images: `'$(jq -r '.engineeringEvidence.mobileSavedImages // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Mobile detail-context candidates: `'$(jq -r '.engineeringEvidence.mobileDetailContextCandidates // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Mobile engineering hints: `'$(jq -r '.engineeringEvidence.mobileHintCount // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Browser/user session needed: `'$(jq -r '.engineeringEvidence.browserOrUserSessionNeeded // true' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Advertised size: `'$(jq -r '.engineeringEvidence.advertisedSize // "n/a"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Advertised color: `'$(jq -r '.engineeringEvidence.advertisedColor // "n/a"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Exact variant matched: `'$(jq -r '.engineeringEvidence.exactVariantMatched // false' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Variant matrix entries: `'$(jq -r '.engineeringEvidence.variantCount // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Main product images: `'$(jq -r '.engineeringEvidence.mainImageCount // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Structured useful images: `'$(jq -r '.engineeringEvidence.structuredUsefulImages // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Page detail-useful images: `'$(jq -r '.engineeringEvidence.pageDetailUsefulImages // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Layout usable: `'$(jq -r '.engineeringEvidence.layoutUsable // false' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Deep geometry usable: `'$(jq -r '.engineeringEvidence.detailGeometryUsable // false' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- User session needed for deep geometry: `'$(jq -r '.engineeringEvidence.browserOrUserSessionNeededForDeepGeometry // true' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -122,7 +129,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Enforce engineering-usable JD acceptance
+      - name: Enforce layout-usable JD acceptance
         if: always()
         shell: bash
         run: |
@@ -130,5 +137,6 @@ jobs:
           test -f zero-cu-results/ZERO_CU_SUMMARY.json
           test "$(jq -r '.usable // false' zero-cu-results/ZERO_CU_SUMMARY.json)" = "true"
           if [ "$(jq -r '.site // ""' zero-cu-results/ZERO_CU_SUMMARY.json)" = "jd" ]; then
-            test "$(jq -r '.engineeringEvidence.engineeringUsable // false' zero-cu-results/ZERO_CU_SUMMARY.json)" = "true"
+            test "$(jq -r '.engineeringEvidence.exactVariantMatched // false' zero-cu-results/ZERO_CU_SUMMARY.json)" = "true"
+            test "$(jq -r '.engineeringEvidence.layoutUsable // false' zero-cu-results/ZERO_CU_SUMMARY.json)" = "true"
           fi
