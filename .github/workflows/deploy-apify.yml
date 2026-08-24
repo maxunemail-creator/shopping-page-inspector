@@ -1,10 +1,6 @@
-name: Deploy to Apify
+name: Deploy to Apify (manual only)
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '.github/**'
   workflow_dispatch:
     inputs:
       run_smoke:
@@ -15,10 +11,6 @@ on:
 
 permissions:
   contents: write
-
-concurrency:
-  group: deploy-apify-main
-  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -47,7 +39,7 @@ jobs:
 
       - name: Run live JD acceptance sample
         id: smoke
-        if: github.event_name == 'workflow_dispatch' && inputs.run_smoke
+        if: inputs.run_smoke
         continue-on-error: true
         shell: bash
         env:
@@ -78,44 +70,7 @@ jobs:
             RUN_STATUS=$(jq -r '.data.status // empty' apify-results/run-response.json)
           done
           echo "run-status=$RUN_STATUS" >> "$GITHUB_OUTPUT"
-          KVS_ID=$(jq -r '.data.defaultKeyValueStoreId // empty' apify-results/run-response.json)
-          DATASET_ID=$(jq -r '.data.defaultDatasetId // empty' apify-results/run-response.json)
-          echo "kvs-id=$KVS_ID" >> "$GITHUB_OUTPUT"
-          echo "dataset-id=$DATASET_ID" >> "$GITHUB_OUTPUT"
-          if [ -n "$DATASET_ID" ]; then
-            curl -fsS "https://api.apify.com/v2/datasets/${DATASET_ID}/items?clean=true&format=json" \
-              "${auth[@]}" -o apify-results/DATASET.json || true
-          fi
-          if [ -n "$KVS_ID" ]; then
-            curl -fsS "https://api.apify.com/v2/key-value-stores/${KVS_ID}/keys?limit=1000" \
-              "${auth[@]}" -o apify-results/KV_KEYS.json || true
-            for key in OUTPUT STRUCTURED.json STRUCT_IMAGE_MANIFEST.json JD_DESCRIPTION.json JD_DESCRIPTION_RAW.txt PAGE.html PAGE.png VISIBLE_TEXT.txt IMAGES.json JSON_LD.json RESOURCES.json NETWORK_JSON.json DETAIL_MANIFEST.json; do
-              encoded=$(jq -rn --arg s "$key" '$s|@uri')
-              dest="$key"; [ "$key" = OUTPUT ] && dest=OUTPUT.json
-              curl -fsS "https://api.apify.com/v2/key-value-stores/${KVS_ID}/records/${encoded}" \
-                "${auth[@]}" -o "apify-results/${dest}" || true
-            done
-            if [ -s apify-results/KV_KEYS.json ]; then
-              jq -r '.data.items[]?.key // empty' apify-results/KV_KEYS.json \
-                | { grep -E '^(DETAIL_|STRUCT_IMAGE_|JD_DETAIL_)' || true; } \
-                | while IFS= read -r key; do
-                    [ -z "$key" ] && continue
-                    encoded=$(jq -rn --arg s "$key" '$s|@uri')
-                    curl -fsS "https://api.apify.com/v2/key-value-stores/${KVS_ID}/records/${encoded}" \
-                      "${auth[@]}" -o "apify-results/${key}" || true
-                  done
-            fi
-          fi
           test "$RUN_STATUS" = SUCCEEDED
-
-      - name: Upload acceptance evidence
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.run_smoke
-        uses: actions/upload-artifact@v4
-        with:
-          name: jd-acceptance-${{ github.run_id }}
-          path: apify-results/
-          retention-days: 7
-          if-no-files-found: warn
 
       - name: Record deployment status
         if: always()
@@ -129,7 +84,7 @@ jobs:
             "apify_build_id": "${{ steps.apify.outputs.build-id }}",
             "apify_build_number": "${{ steps.apify.outputs.build-number }}",
             "apify_build_status": "${{ steps.apify.outputs.build-status }}",
-            "smoke_requested": "${{ github.event_name == 'workflow_dispatch' && inputs.run_smoke }}",
+            "smoke_requested": "${{ inputs.run_smoke }}",
             "smoke_outcome": "${{ steps.smoke.outcome }}",
             "smoke_run_id": "${{ steps.smoke.outputs.run-id }}",
             "smoke_run_status": "${{ steps.smoke.outputs.run-status }}"
@@ -146,6 +101,6 @@ jobs:
         shell: bash
         run: |
           test "${{ steps.apify.outcome }}" = "success"
-          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.run_smoke }}" = "true" ]; then
+          if [ "${{ inputs.run_smoke }}" = "true" ]; then
             test "${{ steps.smoke.outcome }}" = "success"
           fi
