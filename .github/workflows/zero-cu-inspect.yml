@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'src/zero-cu.js'
+      - 'src/zero-cu-runner.js'
+      - 'src/jd-mobile-fallback.js'
       - 'src/url.js'
       - 'package.json'
       - 'request.json'
@@ -13,6 +15,8 @@ on:
     branches: [main]
     paths:
       - 'src/zero-cu.js'
+      - 'src/zero-cu-runner.js'
+      - 'src/jd-mobile-fallback.js'
       - 'src/url.js'
       - 'package.json'
       - 'request.json'
@@ -81,7 +85,7 @@ jobs:
         run: |
           set -o pipefail
           rm -rf zero-cu-results
-          node src/zero-cu.js "${{ steps.request.outputs.url }}" zero-cu-results | tee zero-cu-console.txt
+          node src/zero-cu-runner.js "${{ steps.request.outputs.url }}" zero-cu-results | tee zero-cu-console.txt
 
       - name: Publish compact summary
         if: always()
@@ -91,15 +95,19 @@ jobs:
             echo '## Zero-CU product inspection'
             echo
             echo '- URL: `${{ steps.request.outputs.url }}`'
-            echo '- Outcome: `${{ steps.inspect.outcome }}`'
+            echo '- Runner outcome: `${{ steps.inspect.outcome }}`'
             if [ -f zero-cu-results/ZERO_CU_SUMMARY.json ]; then
               echo '- Site: `'$(jq -r '.site // "unknown"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
               echo '- SKU: `'$(jq -r '.skuId // .itemId // "n/a"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
               echo '- Title: '$(jq -r '.title // "(not recovered)"' zero-cu-results/ZERO_CU_SUMMARY.json)
-              echo '- Usable: `'$(jq -r '.usable // false' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Saved images: `'$(jq -r '.imageEvidence.saved // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Detail images discovered: `'$(jq -r '.imageEvidence.detailDiscovered // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
-              echo '- Browser required: `'$(jq -r '.engineeringEvidence.browserRequired // "n/a"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Evidence class: `'$(jq -r '.evidenceClass // "unknown"' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Engineering usable: `'$(jq -r '.engineeringEvidence.engineeringUsable // false' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Base detail images: `'$(jq -r '.imageEvidence.detailDiscovered // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Mobile candidates: `'$(jq -r '.engineeringEvidence.mobileCandidateImages // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Mobile saved images: `'$(jq -r '.engineeringEvidence.mobileSavedImages // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Mobile detail-context candidates: `'$(jq -r '.engineeringEvidence.mobileDetailContextCandidates // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Mobile engineering hints: `'$(jq -r '.engineeringEvidence.mobileHintCount // 0' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
+              echo '- Browser/user session needed: `'$(jq -r '.engineeringEvidence.browserOrUserSessionNeeded // true' zero-cu-results/ZERO_CU_SUMMARY.json)'`'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -114,10 +122,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Enforce usable result
+      - name: Enforce engineering-usable JD acceptance
         if: always()
         shell: bash
         run: |
           test "${{ steps.inspect.outcome }}" = "success"
           test -f zero-cu-results/ZERO_CU_SUMMARY.json
           test "$(jq -r '.usable // false' zero-cu-results/ZERO_CU_SUMMARY.json)" = "true"
+          if [ "$(jq -r '.site // ""' zero-cu-results/ZERO_CU_SUMMARY.json)" = "jd" ]; then
+            test "$(jq -r '.engineeringEvidence.engineeringUsable // false' zero-cu-results/ZERO_CU_SUMMARY.json)" = "true"
+          fi
