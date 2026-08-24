@@ -2,127 +2,97 @@
 
 面向工程采购的商品详情检查器。目标不是“爬整站”，而是把已经筛中的真实 SKU 的公开规格、SKU 矩阵、商品图片和结构证据尽量完整拿回来，再把真实结构反向放进 CAD。
 
-## v0.5：Zero-CU first
+## 当前架构：P0/P1 免费，Apify 只做 P2
 
-默认工作流已改成：
+1. **P0 — Zero-CU HTTP**：GitHub Actions 普通 Node.js 请求京东移动商品页，直接解析 `window._itemOnly` / `window._itemInfo`，拿精确 SKU、颜色/尺寸矩阵和主图。不启动浏览器，不用 Apify。
+2. **P1 — GitHub-hosted Chromium**：只有入围商品需要详情尺寸图时，才在标准 GitHub-hosted runner 上用系统 Chrome + `playwright-core` 真浏览器加载移动商品页、滚动详情、捕获 XHR/fetch 和详情 DOM。仍不使用 Apify CU。
+3. **P2 — Apify**：只保留人工触发 fallback。P0/P1 都拿不到关键证据时才用第三方 Actor / Apify Chromium。
+4. **访问控制边界**：登录、验证码、滑块或其他访问控制出现时只记录 partial/block，不自动绕过。
 
-1. **GitHub Actions / 普通 HTTP**：先读取公开商品页、京东移动页内嵌商品数据、公开接口和 CDN 图片；不启动 Chromium，也不调用收费 Apify Actor。
-2. **Apify**：只保留为人工触发的 fallback。当公开数据拿不到深层结构证据时，才运行第三方结构化 Actor 或 Chromium。
-3. **不自动绕访问控制**：登录、验证码、滑块或其他访问控制出现时，只记录失败/partial，不自动解决。
+## P0：Zero-CU JD mobile embedded data
 
-### 京东当前有效的 P0
-
-实际验收显示，桌类商品最有价值的公开入口是：
+当前桌类商品最稳定的公开入口是：
 
 - `item.m.jd.com/product/<sku>.html`
 - 页面中的 `window._itemOnly` / `window._itemInfo`
 - `360buyimg.com` 商品图片 CDN
 
-`src/jd-mobile-structured.js` 会直接从移动商品页内嵌对象恢复：
+`src/jd-mobile-structured.js` 会从移动商品页内嵌对象恢复：精确 SKU、完整 SKU 名称、品牌、当前颜色与尺寸、颜色/尺寸列表、`newColorSize` 全 SKU 变体矩阵、当前 SKU 主图、商品主图数组以及颜色变体主图。解析器支持页面对象中的尾随逗号，不需要执行 JavaScript。
 
-- 精确 SKU；
-- 完整 SKU 名称；
-- 品牌；
-- 当前颜色与尺寸；
-- 颜色列表与尺寸列表；
-- `newColorSize` 全 SKU 变体矩阵；
-- 当前 SKU 主图；
-- 商品主图数组；
-- 每种颜色的变体主图。
+其他公开接口仍做补充，但可能按出口 IP / 风控状态返回空结果或错误页，因此不视为必达：`p.3.cn/prices/mgets`、`pc_item_getWareGraphic`、`dx.3.cn/desc`、`cd.jd.com/description/channel`、`item-soa.jd.com/getWareBusiness`、公开评论接口等。
 
-解析器支持京东页面对象里存在的尾随逗号，不需要执行页面 JavaScript。
+淘宝/天猫 v0.5 目前只做 passive public-HTML/CDN evidence，不调用需要签名、登录或私有 cookie 的接口。
 
-其他公开路径仍作为补充尝试：
+## P1：GitHub-hosted Chromium deep inspection
 
-- `item.jd.com/<sku>.html`：桌面页静态证据；
-- `p.3.cn/prices/mgets`：价格接口；
-- `api.m.jd.com ... pc_item_getWareGraphic`：图文详情接口候选；
-- `dx.3.cn/desc/<sku>` 与 `cd.jd.com/description/channel`：旧详情接口 fallback；
-- `item-soa.jd.com/getWareBusiness`：商品业务数据补充；
-- `club.jd.com` / `sclub.jd.com`：公开评论摘要 fallback。
+`tools/browser-deep/deep-jd-v2.js` 使用 GitHub runner 自带 Google Chrome 和很轻的 `playwright-core`：
 
-这些接口可能按出口 IP / 风控状态返回空结果或错误页，因此 v0.5 不把任何单一接口视为必达。
+- 自动把 JD 桌面链接切到移动商品页；
+- 真浏览器执行页面脚本并滚动到详情区域；
+- 捕获 XHR/fetch/document 响应；
+- 保存 `#detail` DOM、可见文字、网络索引；
+- 从详情 DOM/网络响应中提取 CDN 图片；
+- 使用同一 browser context 下载最多限定数量的较大详情图片；
+- 保存 artifact 后供视觉工程判读。
 
-淘宝/天猫在 v0.5 只做 passive public-HTML/CDN evidence，不调用需要签名、登录或私有 cookie 的接口。
+当前 140 cm 奕洲样本的 P1 验收已通过：GitHub-hosted Chrome 无登录/验证拦截，捕获 27 个网络响应、7 个 detail 类响应、53 个 detail DOM 图片，下载 30 张有效详情图。最关键的接口是移动页实际发起的 `ware/detail/getIntroduceInfo`（`functionId=item_intruduce_info`），其返回体直接包含 29 张商品详情图。验收状态见 `.github/browser-deep-acceptance.json`。
 
-## 最常用的运行方式
+P1 详情图已经恢复出该系列明确尺寸图：桌面高度 75 cm、桌深 60 cm、落地脚深 55 cm、桌板 25 mm、桌面到第一层置物架 52 cm、再上层间距 27 cm、顶部段 16 cm、上层架深 24 cm，总高 170 cm；宽度随 SKU 为 80/100/120/140/160/180 cm。内部未标注的桌腿型材宽度、后横梁高度、显示器臂夹持净空等仍禁止凭宣传图猜数值。
 
-仓库根目录有 `request.json`：
+## 使用方式
+
+P0 根目录请求文件：
 
 ```json
 {
-  "url": "https://item.jd.com/10193770948879.html",
+  "url": "https://item.jd.com/10193770948880.html",
   "maxImages": 36
 }
 ```
 
-更新这个文件并 push 到 `main`，GitHub Actions 的 **Zero-CU product inspection** 会自动运行并上传 evidence artifact。它不需要 `APIFY_TOKEN`。
+更新 `request.json` 会触发 **Zero-CU product inspection**。
 
-也可直接在任何 Node 22+ 环境运行：
+P1 深抓请求文件：
 
-```bash
-node src/zero-cu-runner.js https://item.jd.com/10193770948879.html zero-cu-results
+```json
+{
+  "url": "https://item.jd.com/10193770948880.html",
+  "maxImages": 30
+}
 ```
 
-输出目录典型包含：
+更新 `deep-request.json` 会触发 **Browser-deep product inspection (free public runner)**。
 
-- `ZERO_CU_SUMMARY.json`：总结果和工程判据；
-- `JD_MOBILE_STRUCTURED.json`：移动页恢复出的精确 SKU、颜色/尺寸矩阵和主图；
-- `MOBILE_EVIDENCE.json`：移动页证据统计；
-- `MOBILE_ALL_IMAGE_CANDIDATES.json`：所有候选图片 URL 及优先级；
-- `mobile-images/`：优先下载当前 SKU、商品主图、颜色变体图，再补页面扫描图片；
-- `PRICE.json` / `WARE_GRAPHIC.json` / `ITEM_SOA.json` / `REVIEWS.json`：公开接口补充结果；
-- `PAGE*.html` / `MOBILE_PAGE.html`：原始页面证据。
+P0 本地/任意 Node 22+ 环境也可运行：
+
+```bash
+node src/zero-cu-runner.js https://item.jd.com/10193770948880.html zero-cu-results
+```
+
+P1 输出典型包含：`BROWSER_SUMMARY.json`、`BROWSER_PAGE.html`、`BROWSER_VISIBLE_TEXT.txt`、`DETAIL_DOM.html`、`NETWORK_INDEX.json`、`BROWSER_IMAGE_CANDIDATES.json`、`BROWSER_IMAGE_MANIFEST.json`、`browser-images/`。
 
 ## 工程证据分级
 
-v0.5 不再把“抓到几张图片”直接等同于结构可用：
+- `LAYOUT_USABLE`：精确 SKU、广告尺寸、真实商品主图已经闭合，可用于整体包络/摆放 CAD。
+- `DETAIL_ENGINEERING_CANDIDATE` / browser-deep：取得真实商品详情图，可继续判读有明确标注的内部结构尺寸。
+- 未标注尺寸仍保持 OPEN；不能因为有渲染图/宣传图就反算成制造尺寸。
 
-- `LAYOUT_USABLE`：精确 SKU 行已经匹配，广告尺寸确认，并至少取得真实商品主图。适合做整体包络/摆放 CAD。
-- `DETAIL_ENGINEERING_CANDIDATE`：还取得可能包含结构或详情尺寸的较大详情图，可继续判读桌腿内距、横梁、层板等。
-- 深层几何仍未恢复时，`browserOrUserSessionNeededForDeepGeometry=true`，明确禁止凭宣传图猜内部尺寸。
+## 当前奕洲验收样本
 
-## GitHub Actions
+黑胡桃+黑架、25 mm 实木桌面、洞洞板/双层书架系列：
 
-### Zero-CU product inspection
+- 120×60×170：SKU `10193770948879`；
+- 140×60×170：SKU `10193770948880`；
+- 同颜色完整宽度 SKU 映射以及两次 Zero-CU 验收见 `.github/zero-cu-acceptance.json`。
 
-自动触发：`request.json`、Zero-CU 代码、测试或 workflow 有变更，以及对应 pull request。
+P1 深抓验收使用 140 cm 版本，因为它是当前阳台主工位候选。
 
-CI 只需 Node.js，不安装 Playwright/Chromium，也不消耗 Apify CU。
+## Apify：manual only
 
-### Deploy to Apify (manual only)
+`.github/workflows/deploy-apify.yml` 从 v0.5 起只有 `workflow_dispatch`，普通 push 不再自动部署、更不会自动执行真实商品 smoke run，避免无意烧完 Apify 配额。
 
-Apify workflow 从 v0.5 起只允许 `workflow_dispatch` 人工触发。普通 GitHub push 不再自动部署、更不会自动执行真实购物网站 smoke run，避免无意烧完 Apify 配额。
-
-## 当前验收样本：PASS
-
-京东 SKU `10193770948879`，奕洲书架洞洞板一体实木电脑桌。
-
-Zero-CU 验收 run `32723225484` 得到：
-
-- 精确当前 SKU：`10193770948879`；
-- 当前颜色：`黑胡桃+黑架【25mm实木桌面】`；
-- 当前尺寸：`120*60*170cm【书架洞洞板】`；
-- 8 种颜色 × 6 种尺寸，共 48 个 SKU 组合；
-- 商品主图 3 张；
-- 结构化商品/颜色主图候选 10 张，10 张均下载成功且超过 20 KiB；
-- 当前证据等级：`LAYOUT_USABLE`；
-- 深层结构尺寸仍 OPEN。
-
-同一颜色 `黑胡桃+黑架【25mm实木桌面】` 的 `140*60*170cm【书架洞洞板】` 变体也已从矩阵直接恢复：SKU `10193770948880`。
-
-验收状态另记录于 `.github/zero-cu-acceptance.json`。
-
-## 旧的 Apify 深抓层仍然保留
-
-- `src/structured.js`：第三方结构化 Actor；
-- `src/structured-images.js`：结构化结果图片归档；
-- `src/jd-description.js`：Apify KVS 版详情图片抓取；
-- `src/deep-capture.js`：Playwright/Chromium 深抓；
-- `src/main.js`：Apify Actor 入口。
-
-这些现在是 P1/P2 fallback，不再是日常商品筛选的 P0。
+旧 Apify 代码仍保留为 P2：`src/structured.js`、`src/structured-images.js`、`src/jd-description.js`、`src/deep-capture.js`、`src/main.js`。
 
 ## 安全边界
 
-本项目只处理公开可访问的数据和用户有权访问的页面。不自动登录、不解 CAPTCHA/滑块、不绕过访问控制，也不使用凭证去访问用户未授权的数据。
+本项目只处理公开可访问的数据和用户有权访问的页面。不自动登录、不解 CAPTCHA/滑块、不绕过访问控制，也不使用凭证访问未授权数据。
