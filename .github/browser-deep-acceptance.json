@@ -1,0 +1,54 @@
+{
+  "accepted_at": "2026-08-24T11:56:06Z",
+  "workflow_run_id": 32724340554,
+  "artifact_id": 9518927806,
+  "runner": "github-hosted ubuntu-latest public repository",
+  "browser": "system Google Chrome via playwright-core",
+  "sample": {
+    "url": "https://item.jd.com/10193770948880.html",
+    "mobile_target": "https://item.m.jd.com/product/10193770948880.html",
+    "sku": "10193770948880",
+    "variant": "黑胡桃+黑架【25mm实木桌面】 / 140*60*170cm【书架洞洞板】"
+  },
+  "result": "PASS_DEEP_DETAIL_IMAGES",
+  "page_ok": true,
+  "blocked_markers": [],
+  "detail_dom_present": true,
+  "network_responses_captured": 27,
+  "detail_responses": 7,
+  "ware_graphic_responses": 0,
+  "network_image_candidates": 209,
+  "dom_images": 53,
+  "dom_detail_images": 53,
+  "candidate_images": 247,
+  "attempted_image_downloads": 32,
+  "saved_useful_images": 30,
+  "saved_detail_images": 30,
+  "deep_geometry_candidate": true,
+  "important_response": {
+    "path_family": "api.m.jd.com/ware/detail/getIntroduceInfo",
+    "function_id": "item_intruduce_info",
+    "status": 200,
+    "detail_images_in_payload": 29
+  },
+  "dimension_evidence_from_visual_review": {
+    "desktop_height_cm": 75,
+    "desktop_depth_cm": 60,
+    "floor_foot_depth_cm": 55,
+    "advertised_width_options_cm": [80, 100, 120, 140, 160, 180],
+    "desktop_thickness_mm": 25,
+    "desktop_to_first_shelf_clearance_cm": 52,
+    "first_to_second_shelf_clearance_cm": 27,
+    "upper_top_section_cm": 16,
+    "upper_shelf_depth_cm": 24,
+    "overall_height_cm": 170,
+    "note": "The dimension drawing labels 52 cm between desktop and first shelf. A separate marketing image says '加高50cm洞洞板'; use the explicit 52 cm dimension drawing for CAD and treat 50 cm as nominal marketing text."
+  },
+  "open_items": [
+    "Exact desk-leg width/profile dimensions are not numerically labeled.",
+    "Exact rear horizontal crossbar height is not numerically labeled.",
+    "Exact monitor-arm C-clamp/grommet clearance at the rear desktop edge is not explicitly dimensioned.",
+    "Pegboard hole pitch and usable board width are not numerically labeled."
+  ],
+  "policy": "Use Zero-CU mobile embedded data for routine SKU/layout selection. Escalate to this GitHub-hosted browser-deep workflow only for shortlisted products needing detail images. Keep Apify as manual P2 fallback only."
+}
