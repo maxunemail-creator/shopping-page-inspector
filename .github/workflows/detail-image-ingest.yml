@@ -1,0 +1,102 @@
+name: Ingest external detail-image manifest
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'evidence-manifests/*.json'
+      - '.github/workflows/detail-image-ingest.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'evidence-manifests/*.json'
+      - '.github/workflows/detail-image-ingest.yml'
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: 'Manifest path under repository'
+        required: true
+        default: 'evidence-manifests/10193770948880.firecrawl.json'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve manifest
+        id: manifest
+        shell: bash
+        env:
+          INPUT_MANIFEST: ${{ inputs.manifest }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_MANIFEST:-}" ]; then
+            M="$INPUT_MANIFEST"
+          else
+            M=$(git diff --name-only "${{ github.event.pull_request.base.sha || github.event.before }}" "${{ github.sha }}" 2>/dev/null | grep '^evidence-manifests/.*\.json$' | head -n 1 || true)
+            if [ -z "$M" ]; then M=$(find evidence-manifests -maxdepth 1 -name '*.json' | sort | tail -n 1); fi
+          fi
+          test -f "$M"
+          echo "path=$M" >> "$GITHUB_OUTPUT"
+          echo "sku=$(jq -r '.skuId' "$M")" >> "$GITHUB_OUTPUT"
+          echo "mobile=$(jq -r '.mobileUrl // .productUrl' "$M")" >> "$GITHUB_OUTPUT"
+          echo "Using $M"
+
+      - name: Download detail images
+        shell: bash
+        env:
+          M: ${{ steps.manifest.outputs.path }}
+          REFERER: ${{ steps.manifest.outputs.mobile }}
+        run: |
+          set -euo pipefail
+          mkdir -p detail-images
+          printf 'index\tbytes\tfile\tsource_url\n' > detail-images/download-manifest.tsv
+          i=0
+          jq -r '.detailImageUrls[]' "$M" | while IFS= read -r url; do
+            i=$((i+1))
+            original="${url%%!*}"
+            ext=$(printf '%s' "$original" | sed -n 's/.*\.\([A-Za-z0-9]*\)$/\1/p' | tr '[:upper:]' '[:lower:]')
+            case "$ext" in jpg|jpeg|png|webp|gif|avif) ;; *) ext=bin ;; esac
+            [ "$ext" = jpeg ] && ext=jpg
+            file=$(printf 'detail_%02d.%s' "$i" "$ext")
+            if curl -L --fail --silent --show-error --retry 2 --max-time 25 \
+              -A 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36' \
+              -e "$REFERER" "$original" -o "detail-images/$file"; then
+              bytes=$(stat -c %s "detail-images/$file")
+              printf '%d\t%s\t%s\t%s\n' "$i" "$bytes" "$file" "$url" >> detail-images/download-manifest.tsv
+            else
+              printf '%d\t0\tFAILED\t%s\n' "$i" "$url" >> detail-images/download-manifest.tsv
+            fi
+          done
+          cp "$M" detail-images/source-manifest.json
+          file detail-images/detail_* 2>/dev/null | tee detail-images/file-types.txt || true
+          echo '--- largest ---'
+          find detail-images -maxdepth 1 -type f -name 'detail_*' -printf '%s %f\n' | sort -nr | head -20
+
+      - name: Summary
+        shell: bash
+        run: |
+          downloaded=$(find detail-images -maxdepth 1 -type f -name 'detail_*' | wc -l)
+          expected=$(jq '.detailImageUrls | length' "${{ steps.manifest.outputs.path }}")
+          {
+            echo '## External detail-image ingest'
+            echo
+            echo '- SKU: `${{ steps.manifest.outputs.sku }}`'
+            echo '- Manifest: `${{ steps.manifest.outputs.path }}`'
+            echo "- Downloaded: \`$downloaded / $expected\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$downloaded" -ge 1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: detail-images-${{ steps.manifest.outputs.sku }}-${{ github.run_id }}
+          path: detail-images/
+          if-no-files-found: error
+          retention-days: 14
